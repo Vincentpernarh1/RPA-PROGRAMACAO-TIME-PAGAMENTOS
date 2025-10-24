@@ -19,6 +19,7 @@ from datetime import date, timedelta
 
 
 from Tasks import Processar_Demandas
+from Tasks import download_Demanda
 
 
 warnings.filterwarnings("ignore", category=UserWarning)
@@ -95,101 +96,6 @@ def load_modelos():
 
 
 
-def download_Demanda(page, url_order, q, username, password):
-    try:
-        # --- 1. Login and Initial Navigation ---
-        q.put(("status", "Navigating to login page..."))
-        page.goto(url_order, timeout=60000)
-        q.put(("progress", 10))
-
-        q.put(("status", "Performing login..."))
-        page.get_by_role("textbox", name="User").fill(username)
-        page.get_by_role("textbox", name="Password").fill(password)
-        page.get_by_role("button", name="Log In").click()
-        q.put(("status", "Login successful!"))
-        q.put(("progress", 20))
-
-        # --- 2. Navigate to the correct report section ---
-        q.put(("status", "Navigating to the report section..."))
-        page.locator("#ID_button").click()
-        page.get_by_text("ELOG - Importar A8 Automatica").nth(1).click()
-        q.put(("progress", 30))
-
-        # --- 3. Date-based Search Loop ---
-        current_date = date.today()
-        records_found = False
-        
-        current_date = date.today()
-        records_found = False
-        
-        while not records_found:
-            date_str = current_date.strftime('%d/%m/%Y')
-            q.put(("status", f"Searching for records on: {date_str}"))
-            
-            # Fill date fields and click search
-            page.get_by_role("textbox", name="Data Inicial").fill(date_str)
-            page.get_by_role("textbox", name="Data Final").fill(date_str)
-            page.get_by_role("button", name="Pesquisar").click()
-
-            try:
-                # If it appears, the code continues. If not, it raises a TimeoutError.
-                page.get_by_text("Total records:").click(timeout = 3000)
-                
-                # This code only runs if the expect() call above succeeds
-                q.put(("status", f"Records found for {date_str}!"))
-                records_found = True
-                q.put(("progress", 45))
-
-            except TimeoutError:
-                # This code runs only if the locator was not visible after 60 seconds
-                q.put(("status", f"No records found for {date_str}. Trying previous day."))
-                current_date -= timedelta(days=1)
-                time.sleep(2) # Small delay before trying again
-
-        # --- 4. Row-wise TXT File Download ---
-        q.put(("status", "Starting individual file downloads..."))
-        
-        # Define the base directory for downloads for the found date
-        download_path_base = os.path.join(f"Demanda")
-        os.makedirs(download_path_base, exist_ok=True)
-        
-        # This selector targets rows within the table's body to avoid header rows.
-        data_rows = page.get_by_role("cell", name="Download")
-
-        row_count = data_rows.count()
-        q.put(("status", f"Found {row_count} files to download."))
-
-        for i in range(1,row_count):
-            
-            row = data_rows.nth(i)
-           
-            with page.expect_download() as download_info:
-               download_link =row.click()
-            
-            download = download_info.value
-            
-            # Construct the full path and save the file
-            file_path = os.path.join(download_path_base, f"{i}_{download.suggested_filename}")
-            
-            if os.path.exists(file_path):
-                os.remove(file_path)
-            download.save_as(file_path)
-            q.put(("status", f"Downloaded: {download.suggested_filename}"))
-
-        q.put(("status", "All individual file downloads are complete."))
-
-        q.put(("progress", 65))
-
-        q.put(("status", "Deseja continuar com a transformação das bases?"))
-
-        Processar_Demandas(q)
-
-
-    except Exception as e:
-        q.put(("status", f"An error occurred: {e}"))
-        # You might want to add more specific error handling here
-
-
 
 
 
@@ -197,7 +103,7 @@ def download_Demanda(page, url_order, q, username, password):
     
 def run_automation(playwright: Playwright, q: queue.Queue):
 
-    Processar_Demandas()
+    # Processar_Demandas()
 
     ecr_path, odm_path = None, None
     try:
@@ -233,7 +139,7 @@ def run_automation(playwright: Playwright, q: queue.Queue):
          
        
 
-        # download_Demanda(page,url_order,q,username,password)
+        download_Demanda(page,url_order,q,username,password)
        
 
 
