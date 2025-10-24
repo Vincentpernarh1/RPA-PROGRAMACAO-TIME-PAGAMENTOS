@@ -121,7 +121,7 @@ def run_automation(playwright: Playwright, q: queue.Queue):
         if chromium_path:
             # .exe → use bundled Chromium
             browser = playwright.chromium.launch(
-                headless=False,
+                headless=True,
                 executable_path=chromium_path,
                 args=["--start-maximized"]
             )

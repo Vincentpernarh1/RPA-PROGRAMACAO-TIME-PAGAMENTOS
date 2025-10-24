@@ -13,13 +13,14 @@ import warnings
 import pyxlsb
 import csv
 
+import xlwings as xw
 import time
 from datetime import date, timedelta
 
 caminho_base = os.getcwd()
 
 def download_Demanda(page, url_order, q, username, password):
-    Processar_Demandas(q)
+   
     
     try:
         # --- 1. Login and Initial Navigation ---
@@ -108,7 +109,7 @@ def download_Demanda(page, url_order, q, username, password):
 
         q.put(("status", "Deseja continuar com a transformação das bases?"))
 
-        # Processar_Demandas(q)
+        Processar_Demandas(q)
 
 
     except Exception as e:
@@ -116,18 +117,14 @@ def download_Demanda(page, url_order, q, username, password):
         # You might want to add more specific error handling here
 
 
-
 def Processar_Demandas(q):
-    print("Me here all the time : ",caminho_base)
+   
+    caminho_pasta = os.path.join(caminho_base, "Demanda")
 
-    print( caminho_base)
-    caminho_pasta = os.path.join(caminho_base,"Demanda")
-    print( "Hello me.....")
-    caminho_df_fornecedor = os.path.join(caminho_base,"Bases","DB Fornecedores.xlsx")
+    caminho_df_fornecedor = os.path.join(caminho_base, "Bases", "DB Fornecedores.xlsx")
     df_DB_fornecedor = pd.read_excel(caminho_df_fornecedor)
-    df_DB_fornecedor=df_DB_fornecedor[["CODIMS","CODSAP","UF","FANTAS"]]
+    df_DB_fornecedor = df_DB_fornecedor[["CODIMS", "CODSAP", "UF", "FANTAS"]]
 
-    
     # Verifica se a pasta de demandas existe
     if not os.path.isdir(caminho_pasta):
         print(f"Aviso: A pasta '{caminho_pasta}' não foi encontrada.")
@@ -141,8 +138,7 @@ def Processar_Demandas(q):
     for nome_arquivo in os.listdir(caminho_pasta):
         caminho_completo_arquivo = os.path.join(caminho_pasta, nome_arquivo)
         nome_arquivo_lower = nome_arquivo.lower()
-       
-        
+
         try:
             # --- MANTÉM A LÓGICA ORIGINAL PARA ARQUIVOS .TXT E .CSV ---
             if nome_arquivo_lower.endswith((".txt", ".csv")):
@@ -178,12 +174,15 @@ def Processar_Demandas(q):
                 # Se dados foram extraídos do arquivo, cria um DataFrame
                 if dados_arquivo_atual:
                     df_temp = pd.DataFrame(dados_arquivo_atual)
+                    
+                    # --- NOVO: Adiciona o identificador como False para TXT/CSV ---
+                    df_temp['__highlight_sap'] = False 
+                    
                     lista_dfs.append(df_temp)
 
-
-            # --- NOVA LÓGICA PARA PROCESSAR ARQUIVOS EXCEL (.XLS, .XLSX) ---
+            # --- LÓGICA MODIFICADA PARA PROCESSAR ARQUIVOS EXCEL (.XLS, .XLSX) ---
             elif nome_arquivo_lower.endswith((".xls", ".xlsx")):
-                
+
                 # Mapeamento dos nomes de coluna do arquivo Excel para os nomes desejados
                 colunas_mapeamento = {
                     'DESENHO': 'PN',
@@ -193,7 +192,6 @@ def Processar_Demandas(q):
 
                 # Lê o arquivo Excel
                 df_excel = pd.read_excel(caminho_completo_arquivo)
-                
 
                 # Pega a lista de colunas que precisamos do arquivo original
                 colunas_originais_necessarias = list(colunas_mapeamento.keys())
@@ -205,10 +203,14 @@ def Processar_Demandas(q):
 
                 # 1. Seleciona apenas as colunas que nos interessam
                 df_temp = df_excel[colunas_originais_necessarias].copy()
-                
+
                 # 2. Renomeia as colunas para o padrão final
                 df_temp.rename(columns=colunas_mapeamento, inplace=True)
                 df_temp = df_temp[df_temp["QUANT"] > 0]
+
+                # --- NOVO: Adiciona o identificador para linhas do Excel ---
+                df_temp['__highlight_sap'] = True
+                # --- FIM DA ADIÇÃO ---
 
                 # 3. Adiciona o DataFrame processado à lista para concatenação posterior
                 lista_dfs.append(df_temp)
@@ -220,10 +222,12 @@ def Processar_Demandas(q):
     if not lista_dfs:
         print("Nenhum dado válido foi processado.")
         return pd.DataFrame()
-    
+
     # Concatena todos os DataFrames da lista em um único DataFrame final
     df_final = pd.concat(lista_dfs, ignore_index=True)
     
+    df_final['__highlight_sap'] = df_final['__highlight_sap'].fillna(False)
+
     colunas_numericas = ["PN", "SAP", "QUANT"]
     for col in colunas_numericas:
         df_final[col] = pd.to_numeric(df_final[col], errors='coerce')
@@ -240,21 +244,239 @@ def Processar_Demandas(q):
     # Map to df_final
     df_final["FORNECEDOR"] = df_final["SAP"].astype('Int64', errors='ignore').map(codsap_map)
     df_final["ESTADO"] = df_final["SAP"].astype('Int64', errors='ignore').map(codsap_map_estado)
-    
+
     # Converte colunas para inteiro após remover os nulos
     for col in colunas_numericas:
         df_final[col] = df_final[col].astype(int)
 
-    return df_final.to_excel("Resultados/Demandas_Total.xlsx",index=False)
+    condicao_estado = df_final['ESTADO'] != 'MG'
+    condicao_sap = df_final['SAP'] != 800030982
+    
+    # Aplica AMBAS as condições. O .copy() evita o SettingWithCopyWarning
+    df_final = df_final[condicao_estado & condicao_sap].copy()
+      
+    light_yellow = '#FFFFE0' 
+    df_funilaria = pd.DataFrame(columns=['SAP', 'FORNECEDOR']) # Inicializa vazio
+
+    
+    if '__highlight_sap' in df_final.columns:
+        funilaria_mask = (df_final['__highlight_sap'] == True)
+        df_funilaria = df_final[funilaria_mask][['SAP', 'FORNECEDOR']].copy()
+        df_funilaria.drop_duplicates(inplace=True)
+
+        DF_Horarios = le_arquivo_horario() # Chama sua função
+        
+        if not DF_Horarios.empty:
+            # 2. Cria o mapa: [Supplier Code] -> [Horário de Janela]
+            #    Usa drop_duplicates para garantir que cada Supplier Code seja único
+            mapa_horario_pronto = DF_Horarios.drop_duplicates(
+                subset=['Supplier Code']
+            ).set_index('Supplier Code')['Horário de Janela']
+
+            # 3. Aplica o mapa ao df_funilaria. É muito mais rápido que 'apply'
+            df_funilaria['HORÁRIO'] = df_funilaria['SAP'].map(mapa_horario_pronto)
+        else:
+            print("Aviso: DF_Horarios está vazio. A coluna 'HORÁRIO' não será preenchida.")
+            df_funilaria['HORÁRIO'] = pd.NaT # Ou None
+        
+        # Lógica original de máscara para estilização
+        highlight_mask = funilaria_mask.tolist()
+        
+        # 3. Remove a coluna auxiliar. Ela não é mais necessária.
+        df_final = df_final.drop(columns=['__highlight_sap'])
+    else:
+        # Se a coluna nunca foi criada (só arquivos TXT), cria uma máscara vazia (tudo False)
+        highlight_mask = [False] * len(df_final)
+        print("Nenhum dado de Excel processado, a aba 'funilaria' estará vazia.")
+
+    sap_styles = [
+        f'background-color: {light_yellow}' if mask else ''
+        for mask in highlight_mask
+    ]
+
+   
+    styler = df_final.style
+
+    try:
+        styler = styler.apply(lambda _: sap_styles, subset=['SAP'])
+    except Exception as e:
+        print(f"Não foi possível aplicar o estilo à coluna 'SAP': {e}")
+        
+    output_path = "Resultados/Demandas_Total.xlsx"
+    demand_path = os.path.join(caminho_base,output_path)
+
+    
+    try:
+        # Cria um ExcelWriter para salvar ambos os DataFrames
+        with pd.ExcelWriter(output_path, engine='openpyxl') as writer:
+            # Salva a aba principal estilizada
+            styler.to_excel(writer, sheet_name='Demandas_Total', index=False)
+            
+            # Salva a nova aba 'funilaria' (sem estilo)
+            df_funilaria.to_excel(writer, sheet_name='funilaria', index=False)
+            
+            
+            
+        print(f"Arquivo salvo com sucesso com abas 'Demandas_Total' e 'funilaria' em: {output_path}")
+        Atualiza_PFEP(demand_path,q)
+    except Exception as e:
+        print(f"Erro ao salvar o arquivo Excel com múltiplas abas: {e}")
+
+        try:
+            df_final.to_excel(output_path, index=False)
+            print(f"Arquivo salvo (APENAS ABA PRINCIPAL, sem estilo) em: {output_path}")
+            Atualiza_PFEP(demand_path,q)
+        except Exception as e_fallback:
+            print(f"Erro fatal ao salvar o arquivo: {e_fallback}")
+
+    return
+
+def le_arquivo_horario() :
+   
+    # Define as colunas de interesse
+    colunas_horarios = ['Supplier Code', 'Horário de Janela']
+    
+    # Inicializa o DataFrame final como vazio. 
+    DF_Horarios = pd.DataFrame(columns=colunas_horarios)
+    
+    # 1. Define o caminho para a pasta
+    caminho_matriz_folder = os.path.join(caminho_base, '1 - MATRIZ')
+    
+    # 2. Verifica se a pasta existe
+    if not os.path.isdir(caminho_matriz_folder):
+        print(f"Aviso: A pasta de Matriz não foi encontrada em: {caminho_matriz_folder}")
+    else:
+        # 3. Encontra o nome do arquivo dinamicamente
+        nome_arquivo_horarios_completo = None
+        termo_busca = "horários e restrições" # Busca em minúsculo
+
+        try:
+            for nome_arquivo in os.listdir(caminho_matriz_folder):
+                nome_lower = nome_arquivo.lower()
+                # Verifica se o termo está no nome E se é um arquivo Excel
+                if termo_busca in nome_lower and (nome_lower.endswith('.xlsx') or nome_lower.endswith('.xls')):
+                    nome_arquivo_horarios_completo = os.path.join(caminho_matriz_folder, nome_arquivo)
+                    print(f"Arquivo de horários encontrado: {nome_arquivo}")
+                    break # Para no primeiro arquivo que encontrar
+        except Exception as e:
+            print(f"Erro ao listar arquivos na pasta Matriz: {e}")
+
+        # 4. Se o arquivo foi encontrado, tenta ler os dados
+        if nome_arquivo_horarios_completo:
+            
+            # --- CORREÇÃO: Define o nome literal da aba ---
+            sheet_name_literal = "FIASA, CKD, MOPAR "
+            
+            try:
+                
+                DF_Horarios = pd.read_excel(
+                    nome_arquivo_horarios_completo, 
+                    sheet_name=sheet_name_literal, # Passa o nome literal da aba
+                    usecols=colunas_horarios
+                )
+                
+                print(f"Horários carregados da aba: '{sheet_name_literal}'")
+                
+                # Remove linhas que possam ter vindo com NaNs (ex: linhas em branco)
+                DF_Horarios.dropna(subset=colunas_horarios, inplace=True)
+                # print(f"Total de {len(DF_Horarios)} registros de horários carregados.")
+
+            except FileNotFoundError:
+                print(f"Erro: O arquivo '{nome_arquivo_horarios_completo}' não foi encontrado.")
+            except ValueError as e:
+                # Erro comum se as colunas ou a aba não existirem
+                print(f"Erro ao ler colunas/aba: {e}")
+                print(f"Verifique se a aba '{sheet_name_literal}' E as colunas {colunas_horarios} existem.")
+            except Exception as e:
+                print(f"Erro inesperado ao ler o arquivo Excel de horários: {e}")
+                # (Pode acontecer se a aba não for encontrada)
+                if sheet_name_literal not in str(e): # Evita msg duplicada
+                     print(f"Verifique se a aba '{sheet_name_literal}' existe no arquivo.")
+        
+        else:
+            if os.path.isdir(caminho_matriz_folder):
+                 print(f"Aviso: Nenhum arquivo contendo '{termo_busca}' foi encontrado em {caminho_matriz_folder}")
+
+    return DF_Horarios
+
+
+def Atualiza_PFEP(path_demandas,q):
+    q.put(("status", "Iniciando atualização do PFEP..."))
+    caminho_pasta_pfep = os.path.join(caminho_base, '1 - MATRIZ')
+    nome_pfep = None
+    
+    for nome in os.listdir(caminho_pasta_pfep):
+        if ('PFEP 2024 DHL' in nome or 'PFEP 2025 DHL' in nome) and nome.endswith(('.xlsm', '.xls', '.xlsx')):
+            nome_pfep = os.path.join(caminho_pasta_pfep, nome)
+            break
+    
+    if not nome_pfep:
+        print("⚠️ Arquivo PFEP não encontrado.")
+        return
+
+    demand_folder = os.path.dirname(path_demandas)
+    demand_file = os.path.basename(path_demandas)
+
+    app = None
+    wb = None
+    wb_demandas = None
+
+    q.put(("status", "Abrindo PFEP e atualizando dados..."))
+    try:
+        app = xw.App(visible=False, add_book=False)
+        app.display_alerts = False
+        
+        app.api.AskToUpdateLinks = False  # 🔒 Prevents Excel popup
+
+        wb_demandas = app.books.open(path_demandas)
+
+        # Open PFEP safely, no popup or freeze
+        wb = app.books.open(nome_pfep, update_links=False)
+        wb.app.api.EnableEvents = True
+        ws = wb.sheets['PFEP']
+
+        q.put(("status", "Atualizando fórmulas do PFEP..."))
+        formula = (
+            f'=IF(OFFSET($EL$1,ROW()-1,0)="Fora do Escopo",0,'
+            f'IF(OFFSET($CG$1,ROW()-1,0)="YES",0,'
+            f'SUMIFS(\'{demand_folder}\\[{demand_file}]Demandas_Total\'!$C:$C,'
+            f'\'{demand_folder}\\[{demand_file}]Demandas_Total\'!$B:$B,'
+            f'LEFT(OFFSET($V$1,ROW()-1,0),9),'
+            f'\'{demand_folder}\\[{demand_file}]Demandas_Total\'!$A:$A,'
+            f'OFFSET($C$1,ROW()-1,0))))'
+        )
+
+        ws.range('P5').formula = formula
+        
+        q.put(("status", "Executando macro de recálculo do PFEP..."))
+        wb.app.macro("Calcula_Todo_PFEP")()
+        q.put(("status", "Macro de recálculo finalizada."))
+                        
+        # print("Salvando PFEP...")
+        q.put(("status", "Salvando PFEP atualizado..."))
+        wb.save()
+        # print("💾 PFEP atualizado com sucesso e recálculo executado.")
+        q.put(("status", "PFEP atualizado com sucesso!"))
+
+    except Exception as e:
+        print(f"❌ Erro inesperado durante a atualização do PFEP: {e}")
+
+    finally:
+        if wb:
+            wb.close()
+        if wb_demandas:
+            wb_demandas.close()
+        if app:
+            app.display_alerts = True
+            app.quit()
+
+def Processar_programacao(q):
+    pass
 
 
 
-def PROG_CARGO_LIFT():
-    print("print cargo lift")
 
 
 
 
-def PROG_CKD_MILK_RUN():
-    print("PROG_CKD_MILK_RUN")
-
+            
