@@ -103,7 +103,7 @@ def load_modelos():
     
 def run_automation(playwright: Playwright, q: queue.Queue):
 
-    # Processar_Demandas()
+    # Processar_Demandas(q)
 
     ecr_path, odm_path = None, None
     try:
@@ -121,14 +121,14 @@ def run_automation(playwright: Playwright, q: queue.Queue):
         if chromium_path:
             # .exe → use bundled Chromium
             browser = playwright.chromium.launch(
-                headless=True,
+                headless=False,
                 executable_path=chromium_path,
                 args=["--start-maximized"]
             )
         else:
             # .py → use default Playwright Chromium
             browser = playwright.chromium.launch(
-                headless=True,
+                headless=False,
                 args=["--start-maximized"]
             )
                     
@@ -137,8 +137,6 @@ def run_automation(playwright: Playwright, q: queue.Queue):
         page = context.new_page()
          
          
-       
-
         download_Demanda(page,url_order,q,username,password)
        
 

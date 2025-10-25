@@ -21,7 +21,7 @@ caminho_base = os.getcwd()
 
 def download_Demanda(page, url_order, q, username, password):
    
-    
+    # Processar_Demandas(q)
     try:
         # --- 1. Login and Initial Navigation ---
         q.put(("status", "Navigating to login page..."))
@@ -120,6 +120,9 @@ def download_Demanda(page, url_order, q, username, password):
 def Processar_Demandas(q):
    
     caminho_pasta = os.path.join(caminho_base, "Demanda")
+    # output_path = "Resultados/Demandas_Total.xlsx"
+    # demand_path = os.path.join(caminho_base,output_path)
+    # Atualiza_PFEP(demand_path,q)
 
     caminho_df_fornecedor = os.path.join(caminho_base, "Bases", "DB Fornecedores.xlsx")
     df_DB_fornecedor = pd.read_excel(caminho_df_fornecedor)
@@ -315,8 +318,6 @@ def Processar_Demandas(q):
             # Salva a nova aba 'funilaria' (sem estilo)
             df_funilaria.to_excel(writer, sheet_name='funilaria', index=False)
             
-            
-            
         print(f"Arquivo salvo com sucesso com abas 'Demandas_Total' e 'funilaria' em: {output_path}")
         Atualiza_PFEP(demand_path,q)
     except Exception as e:
@@ -423,17 +424,20 @@ def Atualiza_PFEP(path_demandas,q):
 
     q.put(("status", "Abrindo PFEP e atualizando dados..."))
     try:
-        app = xw.App(visible=False, add_book=False)
+        app = xw.App(visible=True, add_book=False)
         app.display_alerts = False
         
         app.api.AskToUpdateLinks = False  # 🔒 Prevents Excel popup
 
+        q.put(("status", "Abrindo arquivo de demandas..."))
         wb_demandas = app.books.open(path_demandas)
 
         # Open PFEP safely, no popup or freeze
         wb = app.books.open(nome_pfep, update_links=False)
         wb.app.api.EnableEvents = True
         ws = wb.sheets['PFEP']
+        # Processar_programacao(wb,q)
+        q.put(("status", "Atualizando dados do PFEP..."))
 
         q.put(("status", "Atualizando fórmulas do PFEP..."))
         formula = (
@@ -458,25 +462,174 @@ def Atualiza_PFEP(path_demandas,q):
         # print("💾 PFEP atualizado com sucesso e recálculo executado.")
         q.put(("status", "PFEP atualizado com sucesso!"))
 
+
+        if wb_demandas:
+            wb_demandas.close()
+
+        Processar_programacao(wb,q)
+
     except Exception as e:
         print(f"❌ Erro inesperado durante a atualização do PFEP: {e}")
 
     finally:
         if wb:
             wb.close()
-        if wb_demandas:
-            wb_demandas.close()
+        
         if app:
             app.display_alerts = True
             app.quit()
 
-def Processar_programacao(q):
-    pass
 
 
 
 
+def Processar_programacao(pfep, q):
 
+    q.put(("status", "Iniciando atualização da Programação FIASA..."))
+    # Ensure 'caminho_base' is accessible
+    global caminho_base 
+    
+    caminho_pasta_matriz = os.path.join(caminho_base, '1 - MATRIZ')
+    nome_prog_fiasa = None
+    
+    # --- Locate Programação FIASA file ---
+    for nome in os.listdir(caminho_pasta_matriz):
+        if ('Programação FIASA - OFICIAL' in nome or '1. Programação FIASA - OFICIAL' in nome) and nome.endswith(('.xlsm', '.xls', '.xlsx')):
+            nome_prog_fiasa = os.path.join(caminho_pasta_matriz, nome)
+            break
+    
+    if not nome_prog_fiasa:
+        print("⚠️ Arquivo 'Programação FIASA - OFICIAL' não encontrado.")
+        return
 
+    # --- Sheets in PFEP workbook (already open) ---
+    ws_pfep = pfep.sheets['PFEP']
+    ws_supplier = pfep.sheets['Suppliers DB']
+    q.put(("status", "Lendo dados do PFEP e Supplier DB..."))
+    # --- Find last rows ---
+    last_row_pfep = ws_pfep.range('C' + str(ws_pfep.cells.last_cell.row)).end('up').row
+    last_row_supplier = ws_supplier.range('B' + str(ws_supplier.cells.last_cell.row)).end('up').row
+    
+    print(f"📊 PFEP last row: {last_row_pfep}")
+    print(f"📊 Supplier DB last row: {last_row_supplier}")
+
+    # --- Copy PFEP filtered data ---
+    data_pfep = None
+    q.put(("status", "Filtrando e copiando dados do PFEP..."))
+    if ws_pfep.api.AutoFilterMode:
+        ws_pfep.api.AutoFilterMode = False
+        
+    # print("Applying filter to PFEP (Column P <> 0,00)...") 
+    q.put(("status", "Aplicando filtro no PFEP (Coluna P <> 0,00)..."))
+    
+    try:
+        # 1️⃣ Define the xlwings range (includes header)
+        filter_range = ws_pfep.range(f"A6:HA{last_row_pfep}")
+
+        # 2️⃣ Apply the filter
+        filter_range.api.AutoFilter(Field:=16, Criteria1:="<>0,00")
+
+        # 3️⃣ Get visible rows after filtering
+        visible_cells = filter_range.api.SpecialCells(12)  # xlCellTypeVisible = 12
+
+        # 4️⃣ Combine values from visible "areas", skipping header
+        data_pfep = []
+        for i, area in enumerate(visible_cells.Areas):
+            area_range = ws_pfep.range(area.Address)
+            values = area_range.value
+
+            if isinstance(values, list) and isinstance(values[0], list):
+                # Skip first row of first area (header)
+                if i == 0:
+                    data_pfep.extend(values[1:])
+                else:
+                    data_pfep.extend(values)
+            else:
+                # Single row case (no sublists)
+                if i > 0:  # skip header only on first block
+                    data_pfep.append(values)
+
+        print(f"✅ Copied {len(data_pfep)} visible rows (header excluded) from PFEP.")
 
             
+    except Exception as e:
+        print(f"⚠️ No visible data found in PFEP after filtering.")
+        q.put(("status", "⚠️ Nenhum dado visível encontrado no PFEP após o filtro."))
+
+
+    q.put(("status", "Lendo dados do Supplier DB...")) 
+    if ws_pfep.api.AutoFilterMode:
+        ws_pfep.api.AutoFilterMode = False
+    
+    # --- Copy Supplier DB data ---
+    if ws_supplier.api.AutoFilterMode:
+        print("Clearing filters from Supplier DB sheet...")
+        ws_supplier.api.AutoFilterMode = False
+    q.put(("status", "Copiando dados do Supplier DB..."))   
+    data_supplier = ws_supplier.range(f"A6:AT{last_row_supplier}").value
+    if data_supplier:
+        print("✅ Copied Supplier DB data.")
+
+    # --- Open Programação FIASA workbook ---
+    print("Opening Programação FIASA...")
+    q.put(("status", "Abrindo Programação FIASA..."))
+    app_prog_fiasa = xw.App(visible=True, add_book=False) 
+    app_prog_fiasa.display_alerts = False
+    app_prog_fiasa.api.AskToUpdateLinks = False
+    wb_fiasa = app_prog_fiasa.books.open(nome_prog_fiasa,update_links=False,read_only=False)
+    q.put(("status", "Programação FIASA aberta."))
+    try:
+    
+        ws_cola_pfep = wb_fiasa.sheets['COLAR PFEP']
+        ws_cola_supplier = wb_fiasa.sheets['COLAR SUPPLIER']
+        
+        ws_cola_pfep.range('A2:HB15000').clear_contents()
+        ws_cola_supplier.range('A2:AT5000').clear_contents()
+
+        if data_pfep:
+            print("Pasting PFEP data...")
+            # 1️⃣ Paste values
+            dest_range = ws_cola_pfep.range('A2').resize(len(data_pfep), len(data_pfep[0]))
+            dest_range.value = data_pfep
+
+            # 2️⃣ Copy formatting from row 5
+            template_row = ws_cola_pfep.range('5:5')  # Entire row 5 as template
+            format_range = ws_cola_pfep.range('A2').resize(len(data_pfep), dest_range.columns.count)
+            template_row.api.Copy()
+            format_range.api.PasteSpecial(Paste=-4122)  # xlPasteFormats
+            ws_cola_pfep.api.Application.CutCopyMode = False
+
+        else:
+            print("⚠️ No PFEP data to paste.")
+
+        q.put(("status", "Colando dados do Supplier DB na Programação FIASA..."))
+        if data_supplier:
+            print("Pasting Supplier DB data...")
+            
+            dest_range = ws_cola_supplier.range('A2').resize(len(data_supplier), len(data_supplier[0]))
+            dest_range.value = data_supplier
+
+            template_row = ws_cola_supplier.range('5:5')  # Entire row 5 as template
+            format_range = ws_cola_supplier.range('A2').resize(len(data_supplier), dest_range.columns.count)
+            template_row.api.Copy()
+            format_range.api.PasteSpecial(Paste=-4122)  # xlPasteFormats
+            ws_cola_supplier.api.Application.CutCopyMode = False
+
+        else:
+            print("⚠️ No Supplier data to paste.")
+        q.put(("status", "Executando recálculo da Programação FIASA..."))
+        print("Recalculating, saving, and closing Programação FIASA...")
+        wb_fiasa.app.api.CalculateFullRebuild()
+
+        q.put(("status", "Salvando Programação FIASA..."))
+        wb_fiasa.save()
+
+    finally:
+        q.put(("status", "Finalizando atualização da Programação FIASA..."))
+        wb_fiasa.close()
+        app_prog_fiasa.quit()
+        q.put(("status", "Programação FIASA atualizada com sucesso!"))
+
+
+
+
