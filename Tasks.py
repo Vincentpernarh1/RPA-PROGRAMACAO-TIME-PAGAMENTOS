@@ -12,10 +12,11 @@ from playwright.sync_api import sync_playwright, Playwright, TimeoutError, expec
 import warnings
 import pyxlsb
 import csv
-
+import math
 import xlwings as xw
 import time
 from datetime import date, timedelta
+import traceback
 
 caminho_base = os.getcwd()
 
@@ -463,27 +464,20 @@ def Atualiza_PFEP(path_demandas,q):
         q.put(("status", "PFEP atualizado com sucesso!"))
 
 
-        if wb_demandas:
-            wb_demandas.close()
+        # if wb_demandas:
+        #     wb_demandas.close()
 
-        Processar_programacao(wb,q)
+        Processar_programacao(wb_demandas,wb,q)
 
     except Exception as e:
         print(f"❌ Erro inesperado durante a atualização do PFEP: {e}")
 
     finally:
-        if wb:
-            wb.close()
         
-        if app:
-            app.display_alerts = True
-            app.quit()
+        pass
+        
 
-
-
-
-
-def Processar_programacao(pfep, q):
+def Processar_programacao(wb_demandas,pfep, q):
 
     q.put(("status", "Iniciando atualização da Programação FIASA..."))
     # Ensure 'caminho_base' is accessible
@@ -491,12 +485,21 @@ def Processar_programacao(pfep, q):
     
     caminho_pasta_matriz = os.path.join(caminho_base, '1 - MATRIZ')
     nome_prog_fiasa = None
+    cargolift_sp_Supplier = None
+    cargolift_sp_PFEP = None
+
     
     # --- Locate Programação FIASA file ---
     for nome in os.listdir(caminho_pasta_matriz):
         if ('Programação FIASA - OFICIAL' in nome or '1. Programação FIASA - OFICIAL' in nome) and nome.endswith(('.xlsm', '.xls', '.xlsx')):
             nome_prog_fiasa = os.path.join(caminho_pasta_matriz, nome)
-            break
+
+        if ('Cargolift SP - PFEP' in nome or 'Cargolift SP - PFEP' in nome) and nome.endswith(('.xlsm', '.xls', '.xlsx')):
+            cargolift_sp_PFEP = os.path.join(caminho_pasta_matriz, nome)
+
+        if ('Cargolift SP - Suppliers' in nome or 'Cargolift SP - Suppliers' in nome) and nome.endswith(('.xlsm', '.xls', '.xlsx')):
+            cargolift_sp_Supplier = os.path.join(caminho_pasta_matriz, nome)
+            
     
     if not nome_prog_fiasa:
         print("⚠️ Arquivo 'Programação FIASA - OFICIAL' não encontrado.")
@@ -518,6 +521,7 @@ def Processar_programacao(pfep, q):
     q.put(("status", "Filtrando e copiando dados do PFEP..."))
     if ws_pfep.api.AutoFilterMode:
         ws_pfep.api.AutoFilterMode = False
+
         
     # print("Applying filter to PFEP (Column P <> 0,00)...") 
     q.put(("status", "Aplicando filtro no PFEP (Coluna P <> 0,00)..."))
@@ -620,9 +624,71 @@ def Processar_programacao(pfep, q):
         q.put(("status", "Executando recálculo da Programação FIASA..."))
         print("Recalculating, saving, and closing Programação FIASA...")
         wb_fiasa.app.api.CalculateFullRebuild()
+        
+
+        q.put(("status", "Fechando PFEP de Arquivo de demandas..."))
+       
+
+        q.put(("status", "PFEP fechado."))
+
+        suppliers_carrier = {
+            800006524: "CARGOLIFT",
+            800006517: "CARGOLIFT",
+            800000656: "CARGOLIFT",
+            800046898: "CARGOLIFT",
+            800027567: "CARGOLIFT",
+            800033665: "CARGOLIFT",
+            800046464: "CARGOLIFT",
+            800030982: "CARGOLIFT",
+            800005848: "CARGOLIFT"
+        }
+
+        suppliers_fiasa = {
+            800033665: "CARGOLIFT",
+        }
+
+        q.put(("status", "Atualizando Carrier na Programação FIASA..."))
+
+        # Worksheet
+        ws_Sup_db_corrier = wb_fiasa.sheets['Suppliers DB']
+        if ws_Sup_db_corrier.api.AutoFilterMode:
+            ws_Sup_db_corrier.api.AutoFilterMode = False
+
+        # Find last used row in column C
+        last_row = ws_Sup_db_corrier.range('C' + str(ws_Sup_db_corrier.cells.last_cell.row)).end('up').row
+
+        q.put(("status", f"Processando {last_row - 1} linhas para atualização de Carrier..."))
+        # Get data
+        supplier_codes = ws_Sup_db_corrier.range(f'C2:C{last_row}').value
+        fca_values = ws_Sup_db_corrier.range(f'D2:D{last_row}').value
+
+        # Loop through rows
+        for i, code in enumerate(supplier_codes, start=2):
+            if code is None:
+                continue
+
+            try:
+                code_int = int(code)
+            except:
+                continue
+
+            # 1️⃣ Check in main carrier dict
+            if code_int in suppliers_carrier:
+                carrier_value = suppliers_carrier[code_int]
+
+                # 2️⃣ If in FIASA dict, only update if column D == "FCA"
+                if code_int in suppliers_fiasa:
+                    if "FCA" in str(fca_values[i - 2]).strip().upper() :
+                        ws_Sup_db_corrier.range(f'AB{i}').value = carrier_value
+                else:
+                    ws_Sup_db_corrier.range(f'AB{i}').value = carrier_value
+        q.put(("status", "Carrier atualizado na Programação FIASA."))
+        
 
         q.put(("status", "Salvando Programação FIASA..."))
         wb_fiasa.save()
+
+        progrma_cargolift (cargolift_sp_PFEP,cargolift_sp_Supplier,wb_fiasa,q,pfep,wb_demandas)
 
     finally:
         q.put(("status", "Finalizando atualização da Programação FIASA..."))
@@ -631,5 +697,417 @@ def Processar_programacao(pfep, q):
         q.put(("status", "Programação FIASA atualizada com sucesso!"))
 
 
+def progrma_cargolift(arquivo_cargolift_sp_PFEP, arquivo_cargolift_sp_Supplier, wb_fiasa, q,pfep,wb_demandas):
 
 
+
+    q.put(("status", "Iniciando atualização da Programação Cargolift SP..."))
+
+    ws_pfep = wb_fiasa.sheets['PFEP']
+    ws_supplier_db = wb_fiasa.sheets['Suppliers DB']
+
+    # Remove any active filters before we start
+    for ws in [ws_pfep, ws_supplier_db]:
+        try:
+            if ws.api.FilterMode:
+                ws.api.ShowAllData()
+        except:
+            pass
+        ws.api.AutoFilterMode = False
+
+    # ========== PFEP ==========
+    q.put(("status", "Filtrando PFEP por CARGOLIFT..."))
+    last_row_pfep = ws_pfep.range('A' + str(ws_pfep.cells.last_cell.row)).end('up').row
+
+    # PFEP columns go to AQ (43)
+    filter_range_pfep = ws_pfep.range(f"A1:AQ{last_row_pfep}")
+    filter_range_pfep.api.AutoFilter(Field:=43, Criteria1:="CARGOLIFT")
+
+    # Collect visible data
+    try:
+        visible_cells_pfep = filter_range_pfep.api.SpecialCells(12)  # xlCellTypeVisible
+        data_pfep = []
+        for i, area in enumerate(visible_cells_pfep.Areas):
+            area_range = ws_pfep.range(area.Address)
+            values = area_range.value
+            if isinstance(values, list) and isinstance(values[0], list):
+                if i == 0:
+                    data_pfep.extend(values[1:])  # skip header
+                else:
+                    data_pfep.extend(values)
+            else:
+                if i > 0:
+                    data_pfep.append(values)
+        print(f"✅ Copied {len(data_pfep)} visible rows from PFEP.")
+    except Exception:
+        data_pfep = []
+        print("⚠️ Nenhum dado visível encontrado em PFEP com filtro 'CARGOLIFT'.")
+
+    # Clear filter
+    try:
+        if ws_pfep.api.FilterMode:
+            ws_pfep.api.ShowAllData()
+    except:
+        pass
+    ws_pfep.api.AutoFilterMode = False
+
+    # ========== SUPPLIER DB ==========
+    q.put(("status", "Filtrando Supplier DB por CARGOLIFT..."))
+    last_row_supplier = ws_supplier_db.range('A' + str(ws_supplier_db.cells.last_cell.row)).end('up').row
+
+    # Supplier DB columns go to AJ (36)
+    filter_range_supplier = ws_supplier_db.range(f"A1:AJ{last_row_supplier}")
+    filter_range_supplier.api.AutoFilter(Field:=28, Criteria1:="CARGOLIFT")  # AB = 28
+
+    try:
+        visible_cells_supplier = filter_range_supplier.api.SpecialCells(12)
+        data_supplier = []
+        for i, area in enumerate(visible_cells_supplier.Areas):
+            area_range = ws_supplier_db.range(area.Address)
+            values = area_range.value
+            if isinstance(values, list) and isinstance(values[0], list):
+                if i == 0:
+                    data_supplier.extend(values[1:])
+                else:
+                    data_supplier.extend(values)
+            else:
+                if i > 0:
+                    data_supplier.append(values)
+        print(f"✅ Copied {len(data_supplier)} visible rows from Supplier DB.")
+    except Exception:
+        data_supplier = []
+        print("⚠️ Nenhum dado visível encontrado em Supplier DB com filtro 'CARGOLIFT'.")
+
+    try:
+        if ws_supplier_db.api.FilterMode:
+            ws_supplier_db.api.ShowAllData()
+    except:
+        pass
+    ws_supplier_db.api.AutoFilterMode = False
+
+    # ========== DESTINATION FILES ==========
+    q.put(("status", "Abrindo arquivos de destino (Cargolift SP)..."))
+    # ✅ Single Excel instance for both destination files
+    app_cargolift = xw.App(visible=True, add_book=False)
+    app_cargolift.display_alerts = False
+    app_cargolift.api.AskToUpdateLinks = False
+
+    wb_cargolift_sp_PFEP = app_cargolift.books.open(
+        arquivo_cargolift_sp_PFEP, update_links=False, read_only=False
+    )
+    wb_cargolift_sp_Supplier = app_cargolift.books.open(
+        arquivo_cargolift_sp_Supplier, update_links=False, read_only=False
+    )
+
+    
+    ws_dest_pfep = wb_cargolift_sp_PFEP.sheets['PFEP']
+    ws_dest_supplier = wb_cargolift_sp_Supplier.sheets['Cargolift SP - Suppliers DB Wk ']
+
+    # Clear destination before pasting
+    ws_dest_pfep.range('A3').expand().clear_contents()
+    ws_dest_supplier.range('A3').expand().clear_contents()
+
+    # Paste PFEP
+    if data_pfep:
+        print("📋 Colando dados PFEP...")
+        ws_dest_pfep.range('A3').value = data_pfep
+
+    # Paste Supplier DB
+    if data_supplier:
+        print("📋 Colando dados Supplier DB...")
+        ws_dest_supplier.range('A3').value = data_supplier
+    
+    # Save and close
+    wb_cargolift_sp_PFEP.save()
+    wb_cargolift_sp_Supplier.save()
+    Corregir_peso_e_valor(wb=wb_cargolift_sp_Supplier,demandas_path =wb_demandas ,q = q,pfep_source = pfep)
+
+    wb_cargolift_sp_PFEP.close()
+    # wb_cargolift_sp_Supplier.close()
+    app_cargolift.quit()
+
+
+    q.put(("status", "✅ Atualização da Programação Cargolift SP concluída!"))
+    print("✅ Atualização concluída com sucesso!")
+
+
+
+
+
+# --- 1. FUNÇÃO DE NORMALIZAÇÃO CORRIGIDA ---
+def normalize_value(value):
+    """
+    Converte valor para string, remove espaços, coloca em maiúsculo
+    e remove '.0' do final (crucial para PNs lidos como float).
+    """
+    if value is None:
+        return ""
+    # Converte para string, remove espaços
+    s = str(value).strip().upper()
+    
+    # Remove ".0" de PNs que o Excel leu como float
+    if s.endswith('.0'):
+        return s[:-2] # Remove os dois últimos caracteres ('.0')
+        
+    return s
+
+
+
+
+def Corregir_peso_e_valor(q, wb=None, demandas_path=None, pfep_source=None):
+    
+    # Renomeia variáveis para clareza
+    wb_cargolift = wb
+    wb_demandas = demandas_path
+    wb_pfep = pfep_source
+    
+    global caminho_base 
+    global normalize_value 
+
+    q.put(("status",f"--- 🚀 Iniciando a função Corregir_peso_e_valor ---"))
+    q.put(("status",f"Workbook Alvo: {wb_cargolift.name}"))
+    q.put(("status",f"Workbook Demandas: {wb_demandas.name}"))
+    q.put(("status",f"Workbook PFEP: {wb_pfep.name}"))
+
+    try:
+        # --- 1. Obter dados do 'wb_demandas' (PN e SAP) ---
+        q.put(("status", "Etapa 1: Lendo dados do 'Demandas'..."))
+        sheet_demandas = wb_demandas.sheets.active
+        df_demandas = sheet_demandas.range('A1').expand().options(pd.DataFrame, index=False, header=True).value
+        
+        if 'PN' not in df_demandas.columns or 'SAP' not in df_demandas.columns:
+            q.put(("status", "ERRO: Colunas 'PN' ou 'SAP' não encontradas no arquivo Demandas."))
+            return
+
+        df_demandas['PN_norm'] = df_demandas['PN'].apply(normalize_value)
+        df_demandas['SAP_norm'] = df_demandas['SAP'].apply(normalize_value)
+        q.put(("status", f"Ok. Encontrados {len(df_demandas)} registros no 'Demandas'."))
+
+        # --- 2. Obter dados do 'wb_pfep' (Part Number RTM) ---
+        q.put(("status","Etapa 2: Lendo dados do 'PFEP'..."))
+        sheet_pfep = wb_pfep.sheets.active
+        header_range = sheet_pfep.range('A6').expand('right')
+        header_values = header_range.value
+        
+        pn_col_index = None # Índice 0-based
+        if isinstance(header_values, list):
+            try:
+                pn_col_index = header_values.index('Part Number RTM')
+            except ValueError:
+                q.put(("status", "ERRO: Coluna 'Part Number RTM' não encontrada na linha 6 do 'PFEP'."))
+                return
+        else:
+            q.put(("status", "ERRO: Não foi possível ler os cabeçalhos da linha 6 do 'PFEP'."))
+            return
+
+        pn_col_letter = xw.utils.col_name(pn_col_index + 1)
+        q.put(("status",f"Ok. Coluna 'Part Number RTM' encontrada em: {pn_col_letter}6 (Índice 0-based: {pn_col_index})"))
+        
+        last_row_pfep = sheet_pfep.range(f'{pn_col_letter}7').end('down').row
+        pfep_pns_raw = sheet_pfep.range(f'{pn_col_letter}7:{pn_col_letter}{last_row_pfep}').value
+        
+        pfep_pns_set = {normalize_value(pn) for pn in pfep_pns_raw if pn is not None}
+        q.put(("status",f"Ok. Encontrados {len(pfep_pns_set)} PNs únicos no 'PFEP'."))
+        
+        if pfep_pns_set:
+             q.put(("status",f" 	-> Debug: Exemplo de PN normalizado do PFEP: '{next(iter(pfep_pns_set))}'"))
+
+        # --- 3. "XLOOKUP": Encontrar PNs que estão no 'Demandas' mas não no 'PFEP' ---
+        q.put(("status","Etapa 3: Cruzando dados (PNs Demandas x PFs PFEP)..."))
+        
+        missing_pns_mask = ~df_demandas['PN_norm'].isin(pfep_pns_set)
+        df_missing_pns = df_demandas[missing_pns_mask]
+        
+        found_pns_mask = ~missing_pns_mask
+        found_pns_count = found_pns_mask.sum()
+        missing_pns_count = len(df_missing_pns)
+        
+        q.put(("status", f"Ok. PNs de 'Demandas' ENCONTRADOS no 'PFEP': {found_pns_count}"))
+        q.put(("status", f"Ok. PNs de 'Demandas' NÃO ENCONTRADOS no 'PFEP': {missing_pns_count}"))
+
+        if missing_pns_count > 0 and not df_missing_pns.empty:
+            q.put(("status", f" 	-> Exemplo de PN NÃO encontrado: '{df_missing_pns.iloc[0]['PN_norm']}' (Original: '{df_missing_pns.iloc[0]['PN']}')"))
+        if found_pns_count > 0:
+            df_found = df_demandas[found_pns_mask]
+            if not df_found.empty:
+                q.put(("status", f" 	-> Exemplo de PN ENCONTRADO: '{df_found.iloc[0]['PN_norm']}' (Original: '{df_found.iloc[0]['PN']}')"))
+
+        if df_missing_pns.empty:
+            q.put(("status","Ok. Nenhum PN do 'Demandas' está faltando no 'PFEP'. Encerrando."))
+            q.put(("status","--- ✅ Processo concluído (sem alterações) ---"))
+            return
+
+
+
+        if wb_demandas :
+                wb_demandas.close()
+
+        if  wb_pfep :
+             wb_pfep.close()
+
+
+
+            
+        q.put(("status", f"Ok. {len(df_missing_pns)} PNs faltantes serão filtrados pelo SAP..."))
+
+        # --- 4. Filtrar pelos SAPs do JSON ---
+        q.put(("status", "Etapa 4: Filtrando PNs faltantes pelo JSON 'Forncedores_Responsavel.json'..."))
+        json_path = os.path.join(caminho_base,"Bases","Forncedores_Responsavel.json")
+        
+        if not os.path.exists(json_path):
+            q.put(("status", f"ERRO: Arquivo JSON '{json_path}' não encontrado."))
+            return
+
+        with open(json_path, 'r', encoding='utf-8') as f:
+            fornecedores_data = json.load(f)
+        
+        valid_saps_from_json = {normalize_value(sap): data for sap, data in fornecedores_data.items()}
+        q.put(("status",f"Ok. Carregados {len(valid_saps_from_json)} SAPs do arquivo JSON."))
+
+        saps_to_update_mask = df_missing_pns['SAP_norm'].isin(valid_saps_from_json.keys())
+        df_final_list = df_missing_pns[saps_to_update_mask]
+
+        if df_final_list.empty:
+            q.put(("status","Ok. Nenhum dos PNs faltantes corresponde a um SAP válido no JSON. Encerrando."))
+            q.put(("status","--- ✅ Processo concluído (sem alterações) ---"))
+            return
+        
+        unique_saps_to_update = df_final_list['SAP_norm'].unique()
+        q.put(("status", f"Ok. Processando atualizações para {len(unique_saps_to_update)} SAP(s) único(s)."))
+        q.put(("status", f" 	-> SAPs para atualizar: {list(unique_saps_to_update)}"))
+
+
+        # --- 5 & 6. Atualizar o 'wb_cargolift' ---
+        q.put(("status","Etapa 5/6: Iniciando atualizações no 'Cargolift'..."))
+        
+        sheet_target = None
+        target_sheet_name_fragment = "SUPPLIERS DB WK" 
+        
+        try:
+            sheet_names_list = [sheet.name for sheet in wb_cargolift.sheets]
+            q.put(("status", f"Planilhas encontradas no '{wb_cargolift.name}': {sheet_names_list}"))
+
+            for sheet in wb_cargolift.sheets:
+                normalized_sheet_name = sheet.name.strip().upper() 
+                if target_sheet_name_fragment in normalized_sheet_name:
+                    sheet_target = sheet
+                    q.put(("status", f"SUCESSO: Planilha de atualização encontrada: '{sheet.name}'"))
+                    break 
+
+            if sheet_target is None:
+                q.put(("status", f"ERRO: Nenhuma planilha encontrada no workbook '{wb_cargolift.name}' que contenha o nome '{target_sheet_name_fragment}'."))
+                return
+                
+        except Exception as e:
+            q.put(("status", f"ERRO: Falha ao tentar encontrar a planilha de atualização. Detalhe: {e}"))
+            return
+
+        # --- ⬇️⬇️⬇️ LÓGICA DE DIAS REMOVIDA (Conforme solicitado) ⬇️⬇️⬇️ ---
+        m3_cols = ['I', 'J', 'K', 'L', 'M', 'N'] # Mon, Tue, Wed, Thu, Fri, Sat
+        kg_cols = ['P', 'Q', 'R', 'S', 'T', 'U'] # Mon, Tue, Wed, Thu, Fri, Sat
+        # --- ⬆️⬆️⬆️ FIM DA REMOÇÃO ⬆️⬆️⬆️ ---
+
+
+        q.put(("status",f"Mapeando 'Supplier Code' da planilha '{sheet_target.name}' para otimização..."))
+        last_row_target = sheet_target.range('C1').end('down').row
+        sap_codes_raw = sheet_target.range(f'C2:C{last_row_target}').value
+        
+        sap_to_row_map = {}
+        if isinstance(sap_codes_raw, list):
+            for i, sap in enumerate(sap_codes_raw):
+                sap_norm = normalize_value(sap) 
+                if sap_norm:
+                    sap_to_row_map[sap_norm] = i + 2
+        else: # Caso de uma única célula
+            sap_norm = normalize_value(sap_codes_raw)
+            if sap_norm:
+                sap_to_row_map[sap_norm] = 2
+
+        q.put(("status",f"Ok. {len(sap_to_row_map)} SAPs mapeados na planilha 'Cargolift'."))
+
+        if sap_to_row_map:
+            exemplo_sap_mapeado = next(iter(sap_to_row_map.keys()))
+            q.put(("status", f" 	-> Debug: Exemplo de SAP normalizado do 'Cargolift' (Coluna C): '{exemplo_sap_mapeado}'"))
+
+        updates_made = 0
+        for sap_norm in unique_saps_to_update:
+            if sap_norm in sap_to_row_map:
+                row_number = sap_to_row_map[sap_norm]
+                
+                json_data_for_sap = valid_saps_from_json[sap_norm]
+                m3_to_add = json_data_for_sap.get("M3", 0)
+                kg_to_add = json_data_for_sap.get("Kg", 0)
+                
+                # --- ⬇️⬇️⬇️ NOVA LÓGICA DE ATUALIZAÇÃO ⬇️⬇️⬇️ ---
+                target_m3_col = None
+                target_kg_col = None
+                current_m3 = 0
+                current_kg = 0
+
+                try:
+                    # Lê os valores da semana inteira para esta linha
+                    m3_values = sheet_target.range(f'I{row_number}:N{row_number}').value
+                    kg_values = sheet_target.range(f'P{row_number}:U{row_number}').value
+                except Exception as e:
+                    q.put((f"ERRO: Falha ao ler dados da linha {row_number}. {e}"))
+                    continue # Pula para o próximo SAP
+
+                # Encontra a primeira coluna de M3 com valor > 0
+                if isinstance(m3_values, list):
+                    for i, val in enumerate(m3_values):
+                        if val is not None:
+                            try:
+                                if float(val) > 0:
+                                    target_m3_col = m3_cols[i] # Ex: 'I'
+                                    current_m3 = float(val)
+                                    break # Para no primeiro que encontrar
+                            except ValueError:
+                                continue # Ignora valores não numéricos (texto)
+                
+                # Encontra a primeira coluna de Kg com valor > 0
+                if isinstance(kg_values, list):
+                    for i, val in enumerate(kg_values):
+                        if val is not None:
+                            try:
+                                if float(val) > 0:
+                                    target_kg_col = kg_cols[i] # Ex: 'P'
+                                    current_kg = float(val)
+                                    break # Para no primeiro que encontrar
+                            except ValueError:
+                                continue # Ignora valores não numéricos
+
+                # Se encontrou colunas de planejamento para M3 e Kg, atualiza
+                if target_m3_col and target_kg_col:
+                    new_m3 = current_m3 + m3_to_add
+                    new_kg = current_kg + kg_to_add
+                    
+                    # Escreve de volta nas colunas específicas que encontrou
+                    sheet_target.range(f'{target_m3_col}{row_number}').value = new_m3
+                    sheet_target.range(f'{target_kg_col}{row_number}').value = new_kg
+                    
+                    q.put(("status", f" 	-> SUCESSO: SAP {sap_norm} (Linha {row_number}): Col M3 '{target_m3_col}' ({current_m3} + {m3_to_add} = {new_m3}). Col Kg '{target_kg_col}' ({current_kg} + {kg_to_add} = {new_kg})."))
+                    updates_made += 1
+                else:
+                    # Se não encontrou nenhuma coluna com valor > 0
+                    q.put(("status", f" 	-> AVISO: SAP '{sap_norm}' (Linha {row_number}): Nenhum valor de planejamento (>0) encontrado nas colunas I-N e P-U. Pulando."))
+                # --- ⬆️⬆️⬆️ FIM DA NOVA LÓGICA ⬆️⬆️⬆️ ---
+                
+            else:
+                q.put(("status", f" 	-> AVISO: SAP '{sap_norm}' (da lista de PNs faltantes) não foi encontrado na coluna 'Supplier Code' do 'Cargolift'. Pulando."))
+        
+        q.put(("status",f"--- ✅ Processo concluído. {updates_made} atualizações de SAP realizadas. ---"))
+
+
+        # calling the cut and copy fucntion to cut and copy data form each programme to the cargo lift.
+        # this is the final part of the fuction 
+
+
+        # wb_cargolift_sp_Supplier.close()
+    except Exception as e:
+        q.put(("status",f"--- ❌ ERRO CRÍTICO na função ---"))
+        q.put(("status", f"Erro: {e}"))
+        q.put(("status",f"Traceback: {traceback.format_exc()}"))
+
+
+def Copiar_planejamentos_para_cargoleft() :
+    print("I am calling you to start the main mild run copy and paste proccess")

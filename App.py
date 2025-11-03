@@ -103,7 +103,7 @@ def load_modelos():
     
 def run_automation(playwright: Playwright, q: queue.Queue):
 
-    # Processar_Demandas(q)
+    Processar_Demandas(q)
 
     ecr_path, odm_path = None, None
     try:
@@ -137,10 +137,10 @@ def run_automation(playwright: Playwright, q: queue.Queue):
         page = context.new_page()
          
          
-        download_Demanda(page,url_order,q,username,password)
+        # download_Demanda(page,url_order,q,username,password)
        
 
-
+ 
 
 
        
