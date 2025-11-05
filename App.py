@@ -18,8 +18,8 @@ from datetime import date, timedelta
 
 
 
-from Tasks import Processar_Demandas
-from Tasks import download_Demanda
+from Tasks import Processar_Demandas,Copiar_planejamentos_para_cargolift_Arquivos ,download_Demanda
+
 
 
 warnings.filterwarnings("ignore", category=UserWarning)
@@ -102,10 +102,10 @@ def load_modelos():
 
     
 def run_automation(playwright: Playwright, q: queue.Queue):
+    Copiar_planejamentos_para_cargolift_Arquivos(q=q)
 
-    Processar_Demandas(q)
+    # Processar_Demandas(q)
 
-    ecr_path, odm_path = None, None
     try:
         # 1. Load Credentials
         q.put(("status", "Carregando credenciais..."))
@@ -136,7 +136,7 @@ def run_automation(playwright: Playwright, q: queue.Queue):
         context = browser.new_context(no_viewport=True)
         page = context.new_page()
          
-         
+         #To start the whole process need to be activated for the full code to run
         # download_Demanda(page,url_order,q,username,password)
        
 
