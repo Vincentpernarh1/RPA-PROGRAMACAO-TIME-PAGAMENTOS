@@ -102,7 +102,7 @@ def load_modelos():
 
     
 def run_automation(playwright: Playwright, q: queue.Queue):
-    Copiar_planejamentos_para_cargolift_Arquivos(q=q)
+    # Copiar_planejamentos_para_cargolift_Arquivos(q=q)
 
     # Processar_Demandas(q)
 
