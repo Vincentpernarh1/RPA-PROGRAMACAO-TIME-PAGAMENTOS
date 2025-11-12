@@ -146,7 +146,7 @@ def download_Demanda(page, url_order, q, username, password):
         data_rows = page.get_by_role("cell", name="Download")
 
         row_count = data_rows.count()
-        q.put(("status", f"Found {row_count} files to download."))
+        q.put(("status", f"Found {row_count-1} files to download."))
 
         for i in range(1,row_count):
             
@@ -167,12 +167,12 @@ def download_Demanda(page, url_order, q, username, password):
 
         q.put(("status", "All individual file downloads are complete."))
 
-        q.put(("progress", 65))
+        q.put(("progress", 10))
 
         q.put(("status", "Deseja continuar com a transformação das bases?"))
 
         Processar_Demandas(q)
-
+        
 
     except Exception as e:
         q.put(("status", f"An error occurred: {e}"))
@@ -197,10 +197,11 @@ def Processar_Demandas(q):
     df_temp = pd.DataFrame()
 
     # Percorre todos os arquivos na pasta de demandas
+    q.put(("progress", 12))
     for nome_arquivo in os.listdir(caminho_pasta):
         caminho_completo_arquivo = os.path.join(caminho_pasta, nome_arquivo)
         nome_arquivo_lower = nome_arquivo.lower()
-
+       
         try:
             # --- MANTÉM A LÓGICA ORIGINAL PARA ARQUIVOS .TXT E .CSV ---
             if nome_arquivo_lower.endswith((".txt", ".csv")):
@@ -320,7 +321,7 @@ def Processar_Demandas(q):
     light_yellow = CONFIG['business_logic']['style_highlight_color'] 
     df_funilaria = pd.DataFrame(columns=['SAP', 'FORNECEDOR']) # Inicializa vazio
 
-    
+    q.put(("progress", 13))
     if '__highlight_sap' in df_final.columns:
         funilaria_mask = (df_final['__highlight_sap'] == True)
         df_funilaria = df_final[funilaria_mask][['SAP', 'FORNECEDOR']].copy()
@@ -350,7 +351,7 @@ def Processar_Demandas(q):
         # Se a coluna nunca foi criada (só arquivos TXT), cria uma máscara vazia (tudo False)
         highlight_mask = [False] * len(df_final)
         print("Nenhum dado de Excel processado, a aba 'funilaria' estará vazia.")
-
+    
     sap_styles = [
         f'background-color: {light_yellow}' if mask else ''
         for mask in highlight_mask
@@ -366,6 +367,7 @@ def Processar_Demandas(q):
         
     output_path = os.path.join(caminho_base, CONFIG['paths']['folders']['base_resultados'], CONFIG['paths']['files']['demandas_total_output'])
     demand_path = output_path
+    q.put(("progress", 20))
 
     
     try:
@@ -388,7 +390,7 @@ def Processar_Demandas(q):
             Atualiza_PFEP(demand_path,q)
         except Exception as e_fallback:
             print(f"Erro fatal ao salvar o arquivo: {e_fallback}")
-
+    q.put(("progress", 22))
     return
 
 def le_arquivo_horario() :
@@ -462,6 +464,7 @@ def le_arquivo_horario() :
 
 def Atualiza_PFEP(path_demandas,q):
     q.put(("status", "Iniciando atualização do PFEP..."))
+    q.put(("progress", 30))
     caminho_pasta_pfep = os.path.join(caminho_base, CONFIG['paths']['folders']['base_matriz'])
     nome_pfep = None
     
@@ -529,12 +532,13 @@ def Atualiza_PFEP(path_demandas,q):
         #     wb_demandas.close()
 
         Processar_programacao(wb_demandas,wb,q)
+        q.put(("progress", 50))
 
     except Exception as e:
         print(f"❌ Erro inesperado durante a atualização do PFEP: {e}")
 
     finally:
-        
+        # q.put(("progress", 35))
         pass
         
 
@@ -643,6 +647,7 @@ def Processar_programacao(wb_demandas,pfep, q):
     app_prog_fiasa.api.AskToUpdateLinks = False
     wb_fiasa = app_prog_fiasa.books.open(nome_prog_fiasa,update_links=False,read_only=False)
     q.put(("status", "Programação FIASA aberta."))
+    q.put(("progress", 60))
     try:
     
         ws_cola_pfep = wb_fiasa.sheets[CONFIG['paths']['sheet_names']['fiasa_cola_pfep']]
@@ -705,7 +710,7 @@ def Processar_programacao(wb_demandas,pfep, q):
         # Get data
         supplier_codes = ws_Sup_db_corrier.range(f'C2:C{last_row}').value
         fca_values = ws_Sup_db_corrier.range(f'D2:D{last_row}').value
-
+        q.put(("progress", 65))
         
         # Loop through rows
         for i, code in enumerate(supplier_codes, start=2):
@@ -749,6 +754,7 @@ def progrma_cargolift(arquivo_cargolift_sp_PFEP, arquivo_cargolift_sp_Supplier, 
 
 
     q.put(("status", "Iniciando atualização da Programação Cargolift SP..."))
+    q.put(("progress", 70))
 
     ws_pfep = wb_fiasa.sheets[CONFIG['paths']['sheet_names']['pfep_main_sheet']]
     ws_supplier_db = wb_fiasa.sheets[CONFIG['paths']['sheet_names']['supplier_db_sheet']]
@@ -805,7 +811,7 @@ def progrma_cargolift(arquivo_cargolift_sp_PFEP, arquivo_cargolift_sp_Supplier, 
     # Supplier DB columns go to AJ (36)
     filter_range_supplier = ws_supplier_db.range(f"A1:AJ{last_row_supplier}")
     filter_range_supplier.api.AutoFilter(Field:=28, Criteria1:="CARGOLIFT")  # AB = 28
-
+    q.put(("progress", 75))
     try:
         visible_cells_supplier = filter_range_supplier.api.SpecialCells(12)
         data_supplier = []
@@ -854,6 +860,7 @@ def progrma_cargolift(arquivo_cargolift_sp_PFEP, arquivo_cargolift_sp_Supplier, 
     ws_dest_pfep.range('A3').expand().clear_contents()
     ws_dest_supplier.range('A3').expand().clear_contents()
 
+    q.put(("progress", 80))
     # Paste PFEP
     if data_pfep:
         print("📋 Colando dados PFEP...")
@@ -908,6 +915,7 @@ def Corregir_peso_e_valor(q, wb=None, demandas_path=None, pfep_source=None):
     global normalize_value 
 
     q.put(("status",f"--- 🚀 Iniciando a função Corregir_peso_e_valor ---"))
+    q.put(("progress", 82))
     q.put(("status",f"Workbook Alvo: {wb_cargolift.name}"))
     q.put(("status",f"Workbook Demandas: {wb_demandas.name}"))
     q.put(("status",f"Workbook PFEP: {wb_pfep.name}"))
@@ -1020,7 +1028,7 @@ def Corregir_peso_e_valor(q, wb=None, demandas_path=None, pfep_source=None):
         
         sheet_target = None
         target_sheet_name_fragment = CONFIG['paths']['sheet_names']['cargolift_sp_supplier_sheet'].strip().upper()
-        
+        q.put(("progress", 86))
         try:
             sheet_names_list = [sheet.name for sheet in wb_cargolift.sheets]
             q.put(("status", f"Planilhas encontradas no '{wb_cargolift.name}': {sheet_names_list}"))
@@ -1140,7 +1148,7 @@ def Corregir_peso_e_valor(q, wb=None, demandas_path=None, pfep_source=None):
         # this is the final part of the fuction 
 
         q.put(("status","--REABRINDO OS ARQUIVOS PARA COMEÇAR COPIA E COLAR--"))
-        q.put(("progress",70))
+        q.put(("progress",90))
         
         Copiar_planejamentos_para_cargolift_Arquivos(q=q) 
         # wb_cargolift_sp_Supplier.close()
@@ -1154,6 +1162,7 @@ def Corregir_peso_e_valor(q, wb=None, demandas_path=None, pfep_source=None):
 def Copiar_planejamentos_para_cargolift_Arquivos(wb_cargolift = None,q = None) :
 
     q.put(("status","Inicializando a funcção de copia e colar os dados"))
+    q.put(("progress",92))
 
     # caminho_pasta_matriz = os.path.join(caminho_base, '1 - MATRIZ')
     caminho_pasta_programacoes = os.path.join(caminho_base, 'Planilhas_Recebidos')
@@ -1234,6 +1243,7 @@ def Copiar_planejamentos_para_FPT_BT(q=None, cargolift_prog_FPT = None , wb_carg
     
     try:
         q.put(("status", "Abrindo FPT BT..."))
+        q.put(("progress",94))
         app_cargolift_prog_FPT = xw.App(visible=False, add_book=False) 
         app_cargolift_prog_FPT.display_alerts = False
         app_cargolift_prog_FPT.api.AskToUpdateLinks = False
@@ -1373,6 +1383,7 @@ def Copiar_planejamentos_para_FPT_BT(q=None, cargolift_prog_FPT = None , wb_carg
             sheet_pfep.api.AutoFilterMode = False # Clear filter
         else:
             q.put(("status", "Nenhum dado para processar em FPT PFEP."))
+        
 
        
     except Exception as e:
@@ -1389,6 +1400,7 @@ def Copiar_planejamentos_para_FPT_BT(q=None, cargolift_prog_FPT = None , wb_carg
 
     
     # --- Call function to paste SUL data ---
+    q.put(("progress",96))
     if Programacao_FPT_Sul and programacao_fiasa_path:
         if Dado_PFEP_sul_a_colar or Dado_supplier_sul_a_colar:
             Copiar_e_Colar_Programacao_Sul(Programacao_FPT_Sul_path = Programacao_FPT_Sul, q = q,
@@ -1788,6 +1800,7 @@ def _colar_dados_no_sul(q, Programacao_FPT_Sul_path, dados_por_origem):
 
         # --- SAVE & CLOSE SUL FILE ---
         q.put(("status", "Salvando arquivo SUL..."))
+        q.put(("progress",98))
         wb_cargolift_prog_FPT_sul.save()
         q.put(("status", "Arquivo SUL salvo com sucesso."))
         wb_cargolift_prog_FPT_sul.close()
