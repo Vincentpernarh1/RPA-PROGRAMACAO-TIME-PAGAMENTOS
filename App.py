@@ -79,6 +79,7 @@ def load_credentials():
     with open(cred_path, "r", encoding="utf-8") as f:
         return json.load(f)
     
+ 
 
 def load_modelos():
     """Loads Credencial.json from the same directory as the running script or executable."""
@@ -94,13 +95,6 @@ def load_modelos():
 
 
 
-
-
-
-
-
-
-    
 def run_automation(playwright: Playwright, q: queue.Queue):
     # Copiar_planejamentos_para_cargolift_Arquivos(q=q)
 
@@ -137,13 +131,9 @@ def run_automation(playwright: Playwright, q: queue.Queue):
         page = context.new_page()
          
          #To start the whole process need to be activated for the full code to run
-        # download_Demanda(page,url_order,q,username,password)
+        download_Demanda(page,url_order,q,username,password)
        
 
- 
-
-
-       
 
     except FileNotFoundError:
         q.put(("status", "Erro: 'Credencial.json' não encontrado."))

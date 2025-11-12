@@ -1,0 +1,109 @@
+{
+  "playwright_selectors": {
+    "login_user_textbox": "User",
+    "login_pass_textbox": "Password",
+    "login_button": "Log In",
+    "main_menu_button": "#ID_button",
+    "menu_item_text": "ELOG - Importar A8 Automatica",
+    "start_date_textbox": "Data Inicial",
+    "end_date_textbox": "Data Final",
+    "search_button": "Pesquisar",
+    "total_records_text": "Total records:",
+    "download_cell_link": "Download"
+  },
+  "paths": {
+    "folders": {
+      "base_demanda": "Demanda",
+      "base_bases": "Bases",
+      "base_resultados": "Resultados",
+      "base_matriz": "1 - MATRIZ",
+      "base_planilhas_recebidos": "Planilhas_Recebidos2"
+    },
+    "files": {
+      "db_fornecedores": "DB Fornecedores.xlsx",
+      "demandas_total_output": "Demandas_Total.xlsx",
+      "fornecedores_responsavel_json": "Forncedores_Responsavel.json"
+    },
+    "dynamic_files": {
+      "horarios_search_term": "horários e restrições",
+      "pfep_search_terms": [
+        "PFEP 2024 DHL",
+        "PFEP 2025 DHL"
+      ],
+      "fiasa_search_terms": [
+        "Programação FIASA - OFICIAL",
+        "1. Programação FIASA - OFICIAL"
+      ],
+      "cargolift_pfep_terms": [
+        "Cargolift SP - PFEP"
+      ],
+      "cargolift_supplier_terms": [
+        "Cargolift SP - Suppliers"
+      ],
+      "fpt_sul_terms": [
+        "PROGRAMAÇÃO SUL"
+      ],
+      "fpt_bt_terms": [
+        "FPT BT"
+      ],
+      "ckd_terms": [
+        "PROGRAMAÇÃO CKD"
+      ],
+      "mopar_supplier_terms": [
+        "Cargolift SP Fornecedor MOPAR"
+      ],
+      "mopar_pn_terms": [
+        "Cargolift SP Part Number"
+      ],
+      "porto_real_terms": [
+        "Cargolift SP - PFEP  Porto Real"
+      ],
+      "fiape_terms": [
+        "Cargolift SP - FIAPE "
+      ]
+    },
+    "sheet_names": {
+      "horarios_sheet": "FIASA, CKD, MOPAR ",
+      "pfep_main_sheet": "PFEP",
+      "supplier_db_sheet": "Suppliers DB",
+      "fiasa_cola_pfep": "COLAR PFEP",
+      "fiasa_cola_supplier": "COLAR SUPPLIER",
+      "cargolift_sp_supplier_sheet": "Cargolift SP - Suppliers DB Wk ",
+      "ckd_pfep": "PFEP",
+      "ckd_supplier": "Suppliers DB",
+      "fpt_bt_pfep": "PFEP",
+      "fpt_bt_supplier": " Suppliers DB ",
+      "sul_pfep": "PFEP",
+      "sul_supplier": "Suppliers DB"
+    }
+  },
+  "business_logic": {
+    "style_highlight_color": "#FFFFE0",
+    "sap_exclusion_list": [
+      800030982
+    ],
+    "fpt_filter_criteria_sp": [
+      "Milk Run SP",
+      "Line Haul SP"
+    ],
+    "fpt_filter_criteria_sul": [
+      "MR SUL"
+    ],
+    "carrier_mappings": {
+      "suppliers_carrier": {
+        "800006524": "CARGOLIFT",
+        "800006517": "CARGOLIFT",
+        "800000656": "CARGOLIFT",
+        "800046898": "CARGOLIFT",
+        "800027567": "CARGOLIFT",
+        "800033665": "CARGOLIFT",
+        "800046464": "CARGOLIFT",
+        "800030982": "CARGOLIFT",
+        "800005848": "CARGOLIFT"
+      },
+      "suppliers_fiasa": {
+        "800033665": "CARGOLIFT"
+      }
+    }
+  }
+}

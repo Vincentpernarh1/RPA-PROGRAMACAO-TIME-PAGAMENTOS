@@ -1,5 +1,6 @@
 import json
 import os
+import sys
 import threading
 import queue
 import tkinter as tk
@@ -18,7 +19,67 @@ import time
 from datetime import date, timedelta
 import traceback
 
+# from App import load_config
+
+
 caminho_base = os.getcwd()
+
+
+
+def load_config():
+    """Loads Credencial.json from the same directory as the running script or executable."""
+    base_path = os.path.dirname(os.path.abspath(sys.argv[0]))
+    config_path = os.path.join(base_path, "config.json")
+
+    if not os.path.exists(config_path):
+        raise FileNotFoundError(f"config.json not found in: {config_path}")
+
+    with open(config_path, "r", encoding="utf-8") as f:
+        return json.load(f)
+   
+
+CONFIG = load_config()
+
+caminho_pasta_matriz = os.path.join(caminho_base, CONFIG['paths']['folders']['base_matriz'])
+# --- ADJUST HELPER ---
+def _check_name(filename, config_key):
+    """
+    Checks if a filename matches any search term in CONFIG['paths']['dynamic_files'].
+    """
+    # Handle single string or list of terms
+    terms_from_config = CONFIG['paths']['dynamic_files'].get(config_key, [])
+    if isinstance(terms_from_config, str):
+        terms = [terms_from_config]
+    else:
+        terms = terms_from_config
+    
+    for term in terms:
+        if term in filename:
+            return True
+    return False
+
+def get_path_from_config(key, folder_key, q=None):
+    """
+    Gets a file path from config.
+    key: The key from 'dynamic_files' (e.g., 'pfep_search_terms').
+    folder_key: The key from 'folders' (e.g., 'base_matriz').
+    """
+    folder_path = os.path.join(caminho_base, CONFIG['paths']['folders'][folder_key])
+
+    if not os.path.isdir(folder_path):
+        if q: q.put(("status", f"AVISO: Pasta não encontrada: {folder_path}"))
+        return None
+
+    for nome in os.listdir(folder_path):
+        if _check_name(nome, key) and not nome.startswith("~$") and nome.endswith(('.xlsm', '.xls', '.xlsx')):
+            return os.path.join(folder_path, nome)
+    
+    if q: q.put(("status", f"AVISO: Nenhum arquivo encontrado para '{key}' em '{folder_path}'"))
+    return None
+# --- END ADJUSTED HELPER ---
+
+
+
 
 def download_Demanda(page, url_order, q, username, password):
    
@@ -78,7 +139,7 @@ def download_Demanda(page, url_order, q, username, password):
         q.put(("status", "Starting individual file downloads..."))
         
         # Define the base directory for downloads for the found date
-        download_path_base = os.path.join(f"Demanda")
+        download_path_base = os.path.join(caminho_base, CONFIG['paths']['folders']['base_demanda'])
         os.makedirs(download_path_base, exist_ok=True)
         
         # This selector targets rows within the table's body to avoid header rows.
@@ -120,12 +181,9 @@ def download_Demanda(page, url_order, q, username, password):
 
 def Processar_Demandas(q):
    
-    caminho_pasta = os.path.join(caminho_base, "Demanda")
-    # output_path = "Resultados/Demandas_Total.xlsx"
-    # demand_path = os.path.join(caminho_base,output_path)
-    # Atualiza_PFEP(demand_path,q)
-
-    caminho_df_fornecedor = os.path.join(caminho_base, "Bases", "DB Fornecedores.xlsx")
+    caminho_pasta = os.path.join(caminho_base, CONFIG['paths']['folders']['base_demanda'])
+    caminho_df_fornecedor = os.path.join(caminho_base, CONFIG['paths']['folders']['base_bases'], CONFIG['paths']['files']['db_fornecedores'])
+    
     df_DB_fornecedor = pd.read_excel(caminho_df_fornecedor)
     df_DB_fornecedor = df_DB_fornecedor[["CODIMS", "CODSAP", "UF", "FANTAS"]]
 
@@ -254,12 +312,12 @@ def Processar_Demandas(q):
         df_final[col] = df_final[col].astype(int)
 
     condicao_estado = df_final['ESTADO'] != 'MG'
-    condicao_sap = df_final['SAP'] != 800030982
+    condicao_sap = ~df_final['SAP'].isin(CONFIG['business_logic']['sap_exclusion_list'])
     
     # Aplica AMBAS as condições. O .copy() evita o SettingWithCopyWarning
     df_final = df_final[condicao_estado & condicao_sap].copy()
       
-    light_yellow = '#FFFFE0' 
+    light_yellow = CONFIG['business_logic']['style_highlight_color'] 
     df_funilaria = pd.DataFrame(columns=['SAP', 'FORNECEDOR']) # Inicializa vazio
 
     
@@ -306,8 +364,8 @@ def Processar_Demandas(q):
     except Exception as e:
         print(f"Não foi possível aplicar o estilo à coluna 'SAP': {e}")
         
-    output_path = "Resultados/Demandas_Total.xlsx"
-    demand_path = os.path.join(caminho_base,output_path)
+    output_path = os.path.join(caminho_base, CONFIG['paths']['folders']['base_resultados'], CONFIG['paths']['files']['demandas_total_output'])
+    demand_path = output_path
 
     
     try:
@@ -342,7 +400,7 @@ def le_arquivo_horario() :
     DF_Horarios = pd.DataFrame(columns=colunas_horarios)
     
     # 1. Define o caminho para a pasta
-    caminho_matriz_folder = os.path.join(caminho_base, '1 - MATRIZ')
+    caminho_matriz_folder = os.path.join(caminho_base, CONFIG['paths']['folders']['base_matriz'])
     
     # 2. Verifica se a pasta existe
     if not os.path.isdir(caminho_matriz_folder):
@@ -350,7 +408,7 @@ def le_arquivo_horario() :
     else:
         # 3. Encontra o nome do arquivo dinamicamente
         nome_arquivo_horarios_completo = None
-        termo_busca = "horários e restrições" # Busca em minúsculo
+        termo_busca = CONFIG['paths']['dynamic_files']['horarios_search_term']
 
         try:
             for nome_arquivo in os.listdir(caminho_matriz_folder):
@@ -367,7 +425,7 @@ def le_arquivo_horario() :
         if nome_arquivo_horarios_completo:
             
             # --- CORREÇÃO: Define o nome literal da aba ---
-            sheet_name_literal = "FIASA, CKD, MOPAR "
+            sheet_name_literal = CONFIG['paths']['sheet_names']['horarios_sheet']
             
             try:
                 
@@ -404,11 +462,11 @@ def le_arquivo_horario() :
 
 def Atualiza_PFEP(path_demandas,q):
     q.put(("status", "Iniciando atualização do PFEP..."))
-    caminho_pasta_pfep = os.path.join(caminho_base, '1 - MATRIZ')
+    caminho_pasta_pfep = os.path.join(caminho_base, CONFIG['paths']['folders']['base_matriz'])
     nome_pfep = None
     
     for nome in os.listdir(caminho_pasta_pfep):
-        if ('PFEP 2024 DHL' in nome or 'PFEP 2025 DHL' in nome) and nome.endswith(('.xlsm', '.xls', '.xlsx')):
+        if _check_name(nome, 'pfep_search_terms') and nome.endswith(('.xlsm', '.xls', '.xlsx')):
             nome_pfep = os.path.join(caminho_pasta_pfep, nome)
             break
     
@@ -436,8 +494,11 @@ def Atualiza_PFEP(path_demandas,q):
         # Open PFEP safely, no popup or freeze
         wb = app.books.open(nome_pfep, update_links=False)
         wb.app.api.EnableEvents = True
-        ws = wb.sheets['PFEP']
+        ws = wb.sheets[CONFIG['paths']['sheet_names']['pfep_main_sheet']]
+
+
         # Processar_programacao(wb,q)
+
         q.put(("status", "Atualizando dados do PFEP..."))
 
         q.put(("status", "Atualizando fórmulas do PFEP..."))
@@ -483,7 +544,7 @@ def Processar_programacao(wb_demandas,pfep, q):
     # Ensure 'caminho_base' is accessible
     global caminho_base 
     
-    caminho_pasta_matriz = os.path.join(caminho_base, '1 - MATRIZ')
+    # caminho_pasta_matriz = os.path.join(caminho_base, '1 - MATRIZ')
     nome_prog_fiasa = None
     cargolift_sp_Supplier = None
     cargolift_sp_PFEP = None
@@ -491,13 +552,13 @@ def Processar_programacao(wb_demandas,pfep, q):
     
     # --- Locate Programação FIASA file ---
     for nome in os.listdir(caminho_pasta_matriz):
-        if ('Programação FIASA - OFICIAL' in nome or '1. Programação FIASA - OFICIAL' in nome) and nome.endswith(('.xlsm', '.xls', '.xlsx')):
+        if _check_name(nome, 'fiasa_search_terms'):
             nome_prog_fiasa = os.path.join(caminho_pasta_matriz, nome)
 
-        if ('Cargolift SP - PFEP' in nome or 'Cargolift SP - PFEP' in nome) and nome.endswith(('.xlsm', '.xls', '.xlsx')):
+        if _check_name(nome, 'cargolift_pfep_terms'):
             cargolift_sp_PFEP = os.path.join(caminho_pasta_matriz, nome)
 
-        if ('Cargolift SP - Suppliers' in nome or 'Cargolift SP - Suppliers' in nome) and nome.endswith(('.xlsm', '.xls', '.xlsx')):
+        if _check_name(nome, 'cargolift_supplier_terms'):
             cargolift_sp_Supplier = os.path.join(caminho_pasta_matriz, nome)
             
     
@@ -506,8 +567,8 @@ def Processar_programacao(wb_demandas,pfep, q):
         return
 
     # --- Sheets in PFEP workbook (already open) ---
-    ws_pfep = pfep.sheets['PFEP']
-    ws_supplier = pfep.sheets['Suppliers DB']
+    ws_pfep = pfep.sheets[CONFIG['paths']['sheet_names']['pfep_main_sheet']]
+    ws_supplier = pfep.sheets[CONFIG['paths']['sheet_names']['supplier_db_sheet']]
     q.put(("status", "Lendo dados do PFEP e Supplier DB..."))
     # --- Find last rows ---
     last_row_pfep = ws_pfep.range('C' + str(ws_pfep.cells.last_cell.row)).end('up').row
@@ -584,8 +645,8 @@ def Processar_programacao(wb_demandas,pfep, q):
     q.put(("status", "Programação FIASA aberta."))
     try:
     
-        ws_cola_pfep = wb_fiasa.sheets['COLAR PFEP']
-        ws_cola_supplier = wb_fiasa.sheets['COLAR SUPPLIER']
+        ws_cola_pfep = wb_fiasa.sheets[CONFIG['paths']['sheet_names']['fiasa_cola_pfep']]
+        ws_cola_supplier = wb_fiasa.sheets[CONFIG['paths']['sheet_names']['fiasa_cola_supplier']]
         
         ws_cola_pfep.range('A2:HB15000').clear_contents()
         ws_cola_supplier.range('A2:AT5000').clear_contents()
@@ -627,30 +688,13 @@ def Processar_programacao(wb_demandas,pfep, q):
         
 
         q.put(("status", "Fechando PFEP de Arquivo de demandas..."))
-       
 
-        q.put(("status", "PFEP fechado."))
-
-        suppliers_carrier = {
-            800006524: "CARGOLIFT",
-            800006517: "CARGOLIFT",
-            800000656: "CARGOLIFT",
-            800046898: "CARGOLIFT",
-            800027567: "CARGOLIFT",
-            800033665: "CARGOLIFT",
-            800046464: "CARGOLIFT",
-            800030982: "CARGOLIFT",
-            800005848: "CARGOLIFT"
-        }
-
-        suppliers_fiasa = {
-            800033665: "CARGOLIFT",
-        }
-
+        suppliers_carrier = CONFIG['business_logic']['carrier_mappings']['suppliers_carrier']
+        suppliers_fiasa = CONFIG['business_logic']['carrier_mappings']['suppliers_fiasa']
         q.put(("status", "Atualizando Carrier na Programação FIASA..."))
 
         # Worksheet
-        ws_Sup_db_corrier = wb_fiasa.sheets['Suppliers DB']
+        ws_Sup_db_corrier = wb_fiasa.sheets[CONFIG['paths']['sheet_names']['supplier_db_sheet']]
         if ws_Sup_db_corrier.api.AutoFilterMode:
             ws_Sup_db_corrier.api.AutoFilterMode = False
 
@@ -662,22 +706,25 @@ def Processar_programacao(wb_demandas,pfep, q):
         supplier_codes = ws_Sup_db_corrier.range(f'C2:C{last_row}').value
         fca_values = ws_Sup_db_corrier.range(f'D2:D{last_row}').value
 
+        
         # Loop through rows
         for i, code in enumerate(supplier_codes, start=2):
             if code is None:
                 continue
 
             try:
-                code_int = int(code)
+                code_str = str(code)
+               
             except:
                 continue
 
+
             # 1️⃣ Check in main carrier dict
-            if code_int in suppliers_carrier:
-                carrier_value = suppliers_carrier[code_int]
+            if code_str in suppliers_carrier:
+                carrier_value = suppliers_carrier[code_str]
 
                 # 2️⃣ If in FIASA dict, only update if column D == "FCA"
-                if code_int in suppliers_fiasa:
+                if code_str in suppliers_fiasa:
                     if "FCA" in str(fca_values[i - 2]).strip().upper() :
                         ws_Sup_db_corrier.range(f'AB{i}').value = carrier_value
                 else:
@@ -703,8 +750,8 @@ def progrma_cargolift(arquivo_cargolift_sp_PFEP, arquivo_cargolift_sp_Supplier, 
 
     q.put(("status", "Iniciando atualização da Programação Cargolift SP..."))
 
-    ws_pfep = wb_fiasa.sheets['PFEP']
-    ws_supplier_db = wb_fiasa.sheets['Suppliers DB']
+    ws_pfep = wb_fiasa.sheets[CONFIG['paths']['sheet_names']['pfep_main_sheet']]
+    ws_supplier_db = wb_fiasa.sheets[CONFIG['paths']['sheet_names']['supplier_db_sheet']]
 
     # Remove any active filters before we start
     for ws in [ws_pfep, ws_supplier_db]:
@@ -800,8 +847,8 @@ def progrma_cargolift(arquivo_cargolift_sp_PFEP, arquivo_cargolift_sp_Supplier, 
     )
 
     
-    ws_dest_pfep = wb_cargolift_sp_PFEP.sheets['PFEP']
-    ws_dest_supplier = wb_cargolift_sp_Supplier.sheets['Cargolift SP - Suppliers DB Wk ']
+    ws_dest_pfep = wb_cargolift_sp_PFEP.sheets[CONFIG['paths']['sheet_names']['pfep_main_sheet']]
+    ws_dest_supplier = wb_cargolift_sp_Supplier.sheets[CONFIG['paths']['sheet_names']['cargolift_sp_supplier_sheet']]
 
     # Clear destination before pasting
     ws_dest_pfep.range('A3').expand().clear_contents()
@@ -828,9 +875,6 @@ def progrma_cargolift(arquivo_cargolift_sp_PFEP, arquivo_cargolift_sp_Supplier, 
 
     q.put(("status", "✅ Atualização da Programação Cargolift SP concluída!"))
     print("✅ Atualização concluída com sucesso!")
-
-
-
 
 
 # --- 1. FUNÇÃO DE NORMALIZAÇÃO CORRIGIDA ---
@@ -936,22 +980,17 @@ def Corregir_peso_e_valor(q, wb=None, demandas_path=None, pfep_source=None):
             q.put(("status","--- ✅ Processo concluído (sem alterações) ---"))
             return
 
-
-
         if wb_demandas :
                 wb_demandas.close()
 
         if  wb_pfep :
              wb_pfep.close()
-
-
-
             
         q.put(("status", f"Ok. {len(df_missing_pns)} PNs faltantes serão filtrados pelo SAP..."))
 
         # --- 4. Filtrar pelos SAPs do JSON ---
         q.put(("status", "Etapa 4: Filtrando PNs faltantes pelo JSON 'Forncedores_Responsavel.json'..."))
-        json_path = os.path.join(caminho_base,"Bases","Forncedores_Responsavel.json")
+        json_path = os.path.join(caminho_base, CONFIG['paths']['folders']['base_bases'], CONFIG['paths']['files']['fornecedores_responsavel_json'])
         
         if not os.path.exists(json_path):
             q.put(("status", f"ERRO: Arquivo JSON '{json_path}' não encontrado."))
@@ -980,7 +1019,7 @@ def Corregir_peso_e_valor(q, wb=None, demandas_path=None, pfep_source=None):
         q.put(("status","Etapa 5/6: Iniciando atualizações no 'Cargolift'..."))
         
         sheet_target = None
-        target_sheet_name_fragment = "SUPPLIERS DB WK" 
+        target_sheet_name_fragment = CONFIG['paths']['sheet_names']['cargolift_sp_supplier_sheet'].strip().upper()
         
         try:
             sheet_names_list = [sheet.name for sheet in wb_cargolift.sheets]
@@ -1097,19 +1136,13 @@ def Corregir_peso_e_valor(q, wb=None, demandas_path=None, pfep_source=None):
         q.put(("status",f"--- ✅ Processo concluído. {updates_made} atualizações de SAP realizadas. ---"))
 
 
-
-
-
-
         # calling the cut and copy fucntion to cut and copy data form each programme to the cargo lift.
         # this is the final part of the fuction 
 
-
-
-        q.put(("status","-----------REABRINDO OS ARQUIVOS PARA COMEÇAR COPIA E COLAR-------------"))
+        q.put(("status","--REABRINDO OS ARQUIVOS PARA COMEÇAR COPIA E COLAR--"))
         q.put(("progress",70))
         
-        # Copiar_planejamentos_para_cargolift(wb_cargolift = wb_cargolift,q=q) 
+        Copiar_planejamentos_para_cargolift_Arquivos(q=q) 
         # wb_cargolift_sp_Supplier.close()
     except Exception as e:
         q.put(("status",f"--- ❌ ERRO CRÍTICO na função ---"))
@@ -1122,53 +1155,30 @@ def Copiar_planejamentos_para_cargolift_Arquivos(wb_cargolift = None,q = None) :
 
     q.put(("status","Inicializando a funcção de copia e colar os dados"))
 
-    caminho_pasta_matriz = os.path.join(caminho_base, '1 - MATRIZ')
+    # caminho_pasta_matriz = os.path.join(caminho_base, '1 - MATRIZ')
     caminho_pasta_programacoes = os.path.join(caminho_base, 'Planilhas_Recebidos')
-
-    nome_prog_fiasa = None
-    cargolift_sp_Supplier = None
-    cargolift_sp_PFEP = None
-    Programacao_FPT_Sul =  None
-
-    #-------------- Programações  -------------
-
-    Cargolift_prog_PR =  None
-    Cargolift_prog_FIAPE = None
-    cargolift_prog_FPT =  None
-   
-    Programacao_CKD =  None
-
     
     # --- Locate Programação FIASA file ---
-    for nome in os.listdir(caminho_pasta_matriz):
-        if ('Programação FIASA - OFICIAL' in nome or '1. Programação FIASA - OFICIAL' in nome) and nome.endswith(('.xlsm', '.xls', '.xlsx')):
-            nome_prog_fiasa = os.path.join(caminho_pasta_matriz, nome)
-
-        if ('Cargolift SP - PFEP' in nome or 'Cargolift SP - PFEP' in nome) and nome.endswith(('.xlsm', '.xls', '.xlsx')):
-            cargolift_sp_PFEP = os.path.join(caminho_pasta_matriz, nome)
-
-        if wb_cargolift == None :
-            if ('Cargolift SP - Suppliers' in nome or 'Cargolift SP - Suppliers' in nome) and nome.endswith(('.xlsm', '.xls', '.xlsx')):
-                cargolift_sp_Supplier = os.path.join(caminho_pasta_matriz, nome)
-        
-        if ('PROGRAMAÇÃO SUL' in nome or 'PROGRAMAÇÃO SUL' in nome) and nome.endswith(('.xlsm', '.xls', '.xlsx')):
-            Programacao_FPT_Sul= os.path.join(caminho_pasta_matriz, nome)
+    
+    nome_prog_fiasa = get_path_from_config('fiasa_search_terms', 'base_matriz', q)
+    cargolift_sp_PFEP = get_path_from_config('cargolift_pfep_terms', 'base_matriz', q)
+    Programacao_FPT_Sul = get_path_from_config('fpt_sul_terms', 'base_matriz', q)
+    
+    cargolift_sp_Supplier = None
+    if wb_cargolift is None :
+        cargolift_sp_Supplier = get_path_from_config('cargolift_supplier_terms', 'base_matriz', q)
+    
+    
 
 
-        
     # *** CORRECTION: Changed 'nome' to 'prog' in this loop to correctly find files ***
     for prog in os.listdir(caminho_pasta_programacoes):
-        if ('Cargolift SP - PFEP  Porto Real' in prog or 'Cargolift SP - PFEP  Porto Real' in prog) and prog.endswith(('.xlsm', '.xls', '.xlsx')):
-            Cargolift_prog_PR = os.path.join(caminho_pasta_programacoes, prog)
-
-        if ('Cargolift SP - FIAPE ' in prog or 'Cargolift SP - FIAPE ' in prog) and prog.endswith(('.xlsm', '.xls', '.xlsx')):
-            Cargolift_prog_FIAPE = os.path.join(caminho_pasta_programacoes, prog)
-
-        if ('FPT BT' in prog or 'FPT BT' in prog) and prog.endswith(('.xlsm', '.xls', '.xlsx')):
+        
+        if ('FPT BT' in prog or 'FPT BT' in prog) and not prog.startswith("~$") and prog.endswith(('.xlsm', '.xls', '.xlsx')):
             cargolift_prog_FPT = os.path.join(caminho_pasta_programacoes, prog)
 
        
-        if ('PROGRAMAÇÃO CKD' in prog or 'PROGRAMAÇÃO CKD' in prog) and prog.endswith(('.xlsm', '.xls', '.xlsx')):
+        if ('PROGRAMAÇÃO CKD' in prog or 'PROGRAMAÇÃO CKD' in prog) and not prog.startswith("~$") and prog.endswith(('.xlsm', '.xls', '.xlsx')):
             Programacao_CKD = os.path.join(caminho_pasta_programacoes, prog)
 
 
@@ -1216,47 +1226,6 @@ def Copiar_planejamentos_para_cargolift_Arquivos(wb_cargolift = None,q = None) :
 
 
 
-def path_of_files(process_type) :
-     
-    cargolift_prog_MOPAR_path =  None
-    cargolift_sp_Part_Number_MOPAR_path =  None
-    cargolift_sp_Embalagem_FPT =  None
-    cargolift_sp_Embalagem_2_Atualizada = None
-    CGLFT_SP_Embalagem_FIAPE = None
-
-    caminho_pasta_matriz = os.path.join(caminho_base, '1 - MATRIZ')
-    caminho_pasta_programacoes = os.path.join(caminho_base, 'Planilhas_Recebidos')
-
-
-    for prog in os.listdir(caminho_pasta_programacoes):
-        if ('Cargolift SP Fornecedor MOPAR' in prog or 'Cargolift SP Fornecedor MOPAR' in prog) and prog.endswith(('.xlsm', '.xls', '.xlsx')):
-                cargolift_prog_MOPAR_path = os.path.join(caminho_pasta_programacoes, prog)
-
-        if ('Cargolift SP Part Number' in prog or 'Cargolift SP Part Number' in prog) and prog.endswith(('.xlsm', '.xls', '.xlsx')):
-                cargolift_sp_Part_Number_MOPAR_path = os.path.join(caminho_pasta_programacoes, prog)
-
-        #------------------------------ Embalagens  -------------------------------------#
-        if ('Cargolift SP - Embalagem FPT' in prog or 'Cargolift SP - Embalagem FPT' in prog) and prog.endswith(('.xlsm', '.xls', '.xlsx')):
-            cargolift_sp_Embalagem_FPT = os.path.join(caminho_pasta_programacoes, prog)
-
-        if ('Cargolift SP - Embalagem 2 Atualizada' in prog or 'Cargolift SP - Embalagem 2 Atualizada' in prog) and prog.endswith(('.xlsm', '.xls', '.xlsx')):
-            cargolift_sp_Embalagem_2_Atualizada = os.path.join(caminho_pasta_programacoes, prog)
-
-        if ('CGLFT SP - Embalagem - FIAPE' in prog or 'CGLFT SP - Embalagem - FIAPE' in prog) and prog.endswith(('.xlsm', '.xls', '.xlsx')):
-            CGLFT_SP_Embalagem_FIAPE = os.path.join(caminho_pasta_programacoes, prog)
-
-    
-    
-    #----------------------- Flow engine  -------------------------------
-    if "MOPAR" in process_type :
-        return cargolift_prog_MOPAR_path,cargolift_sp_Part_Number_MOPAR_path
-    
-    if "EMBALAGEM" in process_type :
-        return cargolift_sp_Embalagem_FPT,cargolift_sp_Embalagem_2_Atualizada,CGLFT_SP_Embalagem_FIAPE
-    
-
-
-
 def Copiar_planejamentos_para_FPT_BT(q=None, cargolift_prog_FPT = None , wb_cargolift_sp_PFEP = None, wb_cargolift_sp_Supplier =  None, Programacao_FPT_Sul =  None, programacao_fiasa_path =  None ,Programacao_CKD_path = None):
     
     app_cargolift_prog_FPT = None
@@ -1265,19 +1234,20 @@ def Copiar_planejamentos_para_FPT_BT(q=None, cargolift_prog_FPT = None , wb_carg
     
     try:
         q.put(("status", "Abrindo FPT BT..."))
-        app_cargolift_prog_FPT = xw.App(visible=True, add_book=False) 
+        app_cargolift_prog_FPT = xw.App(visible=False, add_book=False) 
         app_cargolift_prog_FPT.display_alerts = False
         app_cargolift_prog_FPT.api.AskToUpdateLinks = False
         wb_cargolift_prog_FPT = app_cargolift_prog_FPT.books.open(cargolift_prog_FPT,update_links=False,read_only=False)
 
-        sheet_cargolift_prog_FPT_PFEP = wb_cargolift_prog_FPT.sheets['PFEP']
-        sheet_cargolift_prog_FPT__Suppliers_DB  = wb_cargolift_prog_FPT.sheets[' Suppliers DB ']
+        sheet_cargolift_prog_FPT_PFEP = wb_cargolift_prog_FPT.sheets[CONFIG['paths']['sheet_names']['fpt_bt_pfep']]
+        sheet_cargolift_prog_FPT__Suppliers_DB  = wb_cargolift_prog_FPT.sheets[CONFIG['paths']['sheet_names']['fpt_bt_supplier']]
+        
+        sheet_wb_cargolift_sp_Supplier = wb_cargolift_sp_Supplier.sheets[CONFIG['paths']['sheet_names']['cargolift_sp_supplier_sheet']]
+        sheet_wb_cargolift_sp_PFEP = wb_cargolift_sp_PFEP.sheets[CONFIG['paths']['sheet_names']['pfep_main_sheet']] # Assuming 'PFEP'
 
-        sheet_wb_cargolift_sp_Supplier = wb_cargolift_sp_Supplier.sheets['Cargolift SP - Suppliers DB Wk ']
-        sheet_wb_cargolift_sp_PFEP = wb_cargolift_sp_PFEP.sheets['PFEP']
+        filter_criteria = CONFIG['business_logic']['fpt_filter_criteria_sp']
+        filter_criteria_sul = CONFIG['business_logic']['fpt_filter_criteria_sul']
 
-        filter_criteria = ['Milk Run SP', 'Line Haul SP']
-        filter_criteria_sul = ['MR SUL']
         xlCellTypeVisible = 12 # VBA Constant for SpecialCells
 
         # --- Initialize lists for SUL data ---
@@ -1438,9 +1408,7 @@ def Copiar_planejamentos_para_FPT_BT(q=None, cargolift_prog_FPT = None , wb_carg
 
 
 xlCellTypeVisible = 12 
-
 last_col_format_index = 400
-
 
 
 
@@ -1460,13 +1428,14 @@ def _ler_dados_fiasa(q, programacao_fiasa_path):
 
     try:
         q.put(("status", f"Abrindo arquivo FIASA para ler dados: {programacao_fiasa_path}"))
-        app_programacao_fiasa = xw.App(visible=True, add_book=False)
+        app_programacao_fiasa = xw.App(visible=False, add_book=False)
         app_programacao_fiasa.display_alerts = False
         app_programacao_fiasa.api.AskToUpdateLinks = False
         wb_programacao_fiasa = app_programacao_fiasa.books.open(programacao_fiasa_path, update_links=False, read_only=True)
 
-        sheets_wb_programacao_fiasa_PFEP = wb_programacao_fiasa.sheets['PFEP']
-        sheets_wb_programacao_fiasa_SUPPLIER = wb_programacao_fiasa.sheets['Suppliers DB']
+        sheets_wb_programacao_fiasa_PFEP = wb_programacao_fiasa.sheets[CONFIG['paths']['sheet_names']['pfep_main_sheet']]
+        sheets_wb_programacao_fiasa_SUPPLIER = wb_programacao_fiasa.sheets[CONFIG['paths']['sheet_names']['supplier_db_sheet']]
+        
         filter_sul = 'CARGOLIFT SUL'
 
         # --- Read FIASA PFEP ---
@@ -1526,7 +1495,6 @@ def _ler_dados_fiasa(q, programacao_fiasa_path):
 
 
 
-
 def _ler_dados_ckd(q, Programacao_CKD_path):
     """
     Abre o arquivo CKD, lê os dados SUL e SP (não-SUL) e fecha o arquivo.
@@ -1548,7 +1516,7 @@ def _ler_dados_ckd(q, Programacao_CKD_path):
 
     try:
         q.put(("status", f"Abrindo arquivo CKD para ler dados: {Programacao_CKD_path}"))
-        app_programacao_ckd = xw.App(visible=True, add_book=False)
+        app_programacao_ckd = xw.App(visible=False, add_book=False)
         app_programacao_ckd.display_alerts = False
         app_programacao_ckd.api.AskToUpdateLinks = False
         wb_programacao_ckd = app_programacao_ckd.books.open(Programacao_CKD_path, update_links=False, read_only=True)
@@ -1556,7 +1524,7 @@ def _ler_dados_ckd(q, Programacao_CKD_path):
         # --- Read CKD PFEP ---
         q.put(("status", "Lendo dados CKD PFEP..."))
         try:
-            sheet_ckd_pfep = wb_programacao_ckd.sheets['PFEP']
+            sheet_ckd_pfep = wb_programacao_ckd.sheets[CONFIG['paths']['sheet_names']['ckd_pfep']]
             sheet_ckd_pfep.api.AutoFilterMode = False
             last_row_ckd_pfep = sheet_ckd_pfep.range('W' + str(sheet_ckd_pfep.cells.last_cell.row)).end('up').row
 
@@ -1633,7 +1601,8 @@ def _ler_dados_ckd(q, Programacao_CKD_path):
         # --- Read CKD SUPPLIER ---
         q.put(("status", "Lendo dados CKD Suppliers..."))
         try:
-            sheet_ckd_sup = wb_programacao_ckd.sheets['Suppliers DB'] 
+            sheet_ckd_sup = wb_programacao_ckd.sheets[CONFIG['paths']['sheet_names']['ckd_supplier']]
+
             sheet_ckd_sup.api.AutoFilterMode = False
             last_row_ckd_sup = sheet_ckd_sup.range('L' + str(sheet_ckd_sup.cells.last_cell.row)).end('up').row
 
@@ -1732,7 +1701,6 @@ def _ler_dados_ckd(q, Programacao_CKD_path):
 
 
 
-
 def _colar_dados_no_sul(q, Programacao_FPT_Sul_path, dados_por_origem):
     """
     Abre o arquivo SUL de destino e cola todos os dados de todas as origens.
@@ -1742,13 +1710,13 @@ def _colar_dados_no_sul(q, Programacao_FPT_Sul_path, dados_por_origem):
 
     try:
         q.put(("status", f"Abrindo arquivo SUL: {Programacao_FPT_Sul_path}"))
-        app_cargolift_prog_FPT_sul = xw.App(visible=True, add_book=False)
+        app_cargolift_prog_FPT_sul = xw.App(visible=False, add_book=False)
         app_cargolift_prog_FPT_sul.display_alerts = False
         app_cargolift_prog_FPT_sul.api.AskToUpdateLinks = False
         wb_cargolift_prog_FPT_sul = app_cargolift_prog_FPT_sul.books.open(Programacao_FPT_Sul_path, update_links=False, read_only=False)
 
-        sheet_sup_sul = wb_cargolift_prog_FPT_sul.sheets['Suppliers DB']
-        sheet_pfep_sul = wb_cargolift_prog_FPT_sul.sheets['PFEP']
+        sheet_sup_sul = wb_cargolift_prog_FPT_sul.sheets[CONFIG['paths']['sheet_names']['sul_supplier']]
+        sheet_pfep_sul = wb_cargolift_prog_FPT_sul.sheets[CONFIG['paths']['sheet_names']['sul_pfep']]
 
         # --- Limpar colunas ---
         try:
@@ -1837,6 +1805,7 @@ def _colar_dados_no_sul(q, Programacao_FPT_Sul_path, dados_por_origem):
             app_cargolift_prog_FPT_sul.quit()
         q.put(("status", "Processo SUL concluído."))
 
+
 # --- Main Function (Refactored) ---
 def Copiar_e_Colar_Programacao_Sul(Programacao_FPT_Sul_path =  None, q = None , Dado_PFEP_a_colar =  None, Dado_supplier_a_colar =  None,
                                     programacao_fiasa_path =  None, Programacao_CKD_path =  None, wb_cargolift_sp_PFEP = None,
@@ -1861,232 +1830,560 @@ def Copiar_e_Colar_Programacao_Sul(Programacao_FPT_Sul_path =  None, q = None , 
     else:
         q.put(("status", "ERRO: Caminho para o arquivo SUL de destino não fornecido."))
 
-    copiar_e_colar_SP(q= None , data_ckd_pfep_sp = data_ckd_pfep_sp, data_ckd_supplier_sp =  data_ckd_supplier_sp, wb_cargolift_sp_PFEP = wb_cargolift_sp_PFEP,
+
+    print("processing Mopar and CKD")
+    copiar_e_colar_SP(q= q , data_ckd_pfep_sp = data_ckd_pfep_sp, data_ckd_supplier_sp =  data_ckd_supplier_sp, wb_cargolift_sp_PFEP = wb_cargolift_sp_PFEP,
                                             wb_cargolift_sp_Supplier = wb_cargolift_sp_Supplier)
+    print("Done processing Mopar and CKD")
     
 
 
 
 
 
-def copiar_e_colar_SP(q=None, data_ckd_pfep_sp=None, data_ckd_supplier_sp=None,
-                      wb_cargolift_sp_PFEP=None, wb_cargolift_sp_Supplier=None):
-    
+
+
+
+
+
+
+# -----------------------------------------------------------------------------
+# FUNÇÕES AUXILIARES DE LEITURA (Refatoradas)
+# -----------------------------------------------------------------------------
+
+def _safe_open_workbook(q, app, path):
+    """Abre um workbook com segurança, desabilitando alertas e atualizações."""
+    try:
+        if not path or not os.path.exists(path):
+            if q: q.put(("status", f"AVISO: Arquivo não encontrado: {path}"))
+            return None
+            
+        if q: q.put(("status", f"Abrindo arquivo: {os.path.basename(path)}"))
+        app.display_alerts = False
+        app.api.AskToUpdateLinks = False
+        wb = app.books.open(path, update_links=False, read_only=True)
+        return wb
+    except Exception as e:
+        if q: q.put(("status", f"ERRO ao abrir {path}: {e}"))
+        return None
+
+def _get_sheet_by_name_or_index(q, wb, sheet_name_list):
+    """Tenta encontrar uma planilha por uma lista de nomes; se falhar, pega a primeira."""
+    for name in sheet_name_list:
+        try:
+            return wb.sheets[name]
+        except:
+            continue # Tenta o próximo nome
+            
+    # Se nenhum nome foi encontrado, pega a primeira planilha
+    try:
+        sheet = wb.sheets[0]
+        if q: q.put(("status", f"AVISO: Nenhuma planilha com nome {sheet_name_list} encontrada. Usando a primeira: {sheet.name}"))
+        return sheet
+    except Exception as e:
+        if q: q.put(("status", f"ERRO: Workbook {wb.name} parece estar vazio ou corrupto. {e}"))
+        return None
+
+def _read_data_from_range(q, sheet, start_cell, end_col):
+    """Lê dados de um range, começando em start_cell até a última linha e coluna especificada."""
+    try:
+        last_row = sheet.range(start_cell).end('down').row
+        if last_row == sheet.cells.last_cell.row: # Caso de coluna vazia
+            last_row = sheet.range(start_cell).end('up').row
+        
+        # Correção se a planilha tiver apenas cabeçalho (ou 1 linha)
+        if sheet.range(start_cell).row > last_row:
+             if q: q.put(("status", f"Nenhum dado (>= {start_cell}) encontrado na planilha {sheet.name}."))
+             return []
+
+        # Define o range de A2 até a última linha e coluna
+        range_str = f'{start_cell}:{end_col}{last_row}'
+        data = sheet.range(range_str).value
+        
+        # Garantir que seja sempre uma lista de listas (2D)
+        if last_row == sheet.range(start_cell).row and not isinstance(data[0], list):
+            data = [data] # Transforma 1D em 2D
+            
+        if q: q.put(("status", f"Lidas {len(data)} linhas ({range_str}) de {sheet.name}."))
+        return data
+    except Exception as e:
+        if q: q.put(("status", f"ERRO ao ler dados do range {range_str} em {sheet.name}: {e}"))
+        return []
+
+
+
+
+def _find_filter_column(q, sheet, start_col_char, end_col_char):
     """
-    Cola os dados MOPAR e CKD (não-SUL) nas planilhas de destino SP.
+    [VERSÃO FINAL v10]
+    Esta é a correção. Em vez de checar a Linha 2,
+    usa COUNTA (Cont.Valores) para encontrar a primeira coluna
+    que não está vazia no range de DADOS.
     """
+    try:
+        start_idx = sheet.range(f'{start_col_char}1').column
+        end_idx = sheet.range(f'{end_col_char}1').column
+        last_row = sheet.range('A' + str(sheet.cells.last_cell.row)).end('up').row
+
+        if last_row <= 1:
+            q.put(("status", "AVISO: Planilha só tem cabeçalho, não é possível encontrar a coluna de filtro."))
+            return None
+
+        q.put(("status", f"Buscando coluna com dados (Cont.Valores > 0) na Linha 2 até {last_row}..."))
+
+        for col_idx in range(start_idx, end_idx + 1):
+            col_letter = sheet.range((1, col_idx)).address.split('$')[1]
+            
+            # Define o range de DADOS para esta coluna
+            data_range = sheet.range(f'{col_letter}2:{col_letter}{last_row}')
+            
+            # Usa a função COUNTA (Cont.Valores) do Excel para ver se há algum valor
+            count = 0
+            try:
+                # O CountA é a forma mais rápida de verificar se há *qualquer* valor
+                count = sheet.api.Application.WorksheetFunction.CountA(data_range.api)
+            except Exception as e_counta:
+                # Plano B se o CountA falhar (raro)
+                q.put(("status", f"Aviso: CountA falhou para coluna {col_letter}. Verificando manualmente."))
+                values = data_range.value
+                if isinstance(values, list): # Múltiplas linhas
+                    if any(v is not None and v != "" for v in values):
+                        count = 1
+                elif values is not None and values != "": # Linha única
+                    count = 1
+
+            q.put(("status", f"Verificando {col_letter} (Cont.Valores={count})"))
+
+            # Se achou uma coluna com dados, essa é a nossa coluna!
+            if count > 0:
+                q.put(("status", f"Coluna de filtro encontrada (primeira com dados): {col_letter}"))
+                return col_idx # Retorna o índice 1-based
+        
+        q.put(("status", f"AVISO: Nenhuma coluna com dados (Cont.Valores > 0) encontrada em {sheet.name} entre {start_col_char}-{end_col_char}."))
+        return None
+    except Exception as e:
+        if q: q.put(("status", f"ERRO ao procurar coluna de filtro com CountA: {e}"))
+        return None
+
+
+
+
+
+
+
+def _read_filtered_data(q, sheet, filter_col_start, filter_col_end, copy_range_str):
+    """
+    [VERSÃO FINAL v13]
+    Esta é a correção final, implementando sua lógica.
+    Nós usamos 'Areas' para encontrar as *linhas* visíveis,
+    mas então lemos o *range de colunas completo* (ex: A:AP)
+    para aquelas linhas, como você especificou.
+    """
+    data = []
     
-    # --- 0. Definir destinos e ler dados MOPAR ---
-    sheet_wb_cargolift_sp_Supplier = wb_cargolift_sp_Supplier.sheets['Cargolift SP - Suppliers DB Wk ']
-    sheet_wb_cargolift_sp_PFEP = wb_cargolift_sp_PFEP.sheets['PFEP']
-
-    data_mopar_sup = []
-    data_mopar_pfep = []
-
-    app_mopar_supplier = None
-    wb_mopar_supplier = None
-    app_mopar_pfep = None
-    wb_mopar_pfep = None
+    # 1. Encontrar a coluna para filtrar
+    filter_col_idx = _find_filter_column(q, sheet, filter_col_start, filter_col_end)
+    if not filter_col_idx:
+        return []
 
     try:
-        if q: q.put(("status", "Lendo arquivos MOPAR..."))
-        cargolift_prog_MOPAR_path, cargolift_sp_Part_Number_MOPAR_path = path_of_files("MOPAR")
+        # 2. Limpar qualquer filtro antigo
+        sheet.api.AutoFilterMode = False
+
+        # 3. Definir os ranges
+        last_row = sheet.range('A' + str(sheet.cells.last_cell.row)).end('up').row
+        if last_row <= 1:
+            if q: q.put(("status", f"Nenhum dado para filtrar em {sheet.name} (apenas cabeçalho)."))
+            return []
+            
+        # Pega o range de colunas completo (ex: 'A' e 'AP')
+        start_col_letter = copy_range_str.split(':')[0]
+        last_col_letter = copy_range_str.split(':')[-1]
+        
+        filter_range = sheet.range(f'A1:{last_col_letter}{last_row}')
+        data_range = sheet.range(f'A2:{last_col_letter}{last_row}')
+
+        # 4. Aplicar o filtro
+        xlAnd = 1 
+        filter_range.api.AutoFilter(
+            Field:=filter_col_idx,
+            Criteria1:=">0",
+            Operator:=xlAnd,
+            Criteria2:="<>#N/A"
+        )
+
+        # 5. Copiar os dados visíveis (USANDO 'Areas' DA FORMA CORRETA)
+        try:
+            xlCellTypeVisible = 12
+            visible_cells = data_range.api.SpecialCells(xlCellTypeVisible)
+            
+            # 1. Sim, nós usamos 'Areas', como você disse.
+            for area in visible_cells.Areas:
+                # 2. Descobrimos os limites da linha da área visível
+                start_row = area.row
+                end_row = start_row + area.rows.count - 1
+
+                # 3. Construímos o range para ler, usando o range de colunas COMPLETO
+                #    que você especificou (ex: 'A' até 'AP')
+                correct_range_str = f"{start_col_letter}{start_row}:{last_col_letter}{end_row}"
+                
+                # 4. Lemos o valor do range de largura total
+                values = sheet.range(correct_range_str).value
+                
+                if not values:
+                    continue
+                
+                # 5. Anexamos (com a correção do 'tuple')
+                if isinstance(values, list) and isinstance(values[0], list):
+                    data.extend(values) # Bloco 2D (múltiplas linhas)
+                else:
+                    data.append(list(values)) # Bloco 1D (linha única)
+                    
+        except Exception as e_visible:
+            if q: q.put(("status", f"Nenhum dado visível em {sheet.name} após o filtro (Coluna {filter_col_idx})."))
+            data = []
+        
+        if data:
+            q.put(("status", f"Lidas {len(data)} linhas filtradas de {sheet.name} (Coluna {filter_col_idx})."))
+
+    except Exception as e:
+        if q: q.put(("status", f"ERRO ao filtrar ou copiar dados de {sheet.name}: {e}"))
+    finally:
+        # 6. Limpar o filtro
+        try:
+            sheet.api.AutoFilterMode = False
+        except Exception as e_clear:
+            if q: q.put(("status", f"Aviso: Não foi possível limpar o filtro em {sheet.name}. {e_clear}"))
+            
+    return data
+
+
+
+
+# -----------------------------------------------------------------------------
+# (Mantenha a FUNÇÃO PRINCIPAL 'copiar_e_colar_SP' como está)
+# -----------------------------------------------------------------------------
+
+
+
+
+
+def _read_filtered_data(q, sheet, filter_col_start, filter_col_end, copy_range_str):
+    data = []
+    
+    filter_col_idx = _find_filter_column(q, sheet, filter_col_start, filter_col_end)
+    if not filter_col_idx:
+        return []
+
+    try:
+        sheet.api.AutoFilterMode = False
+
+        last_row = sheet.range('A' + str(sheet.cells.last_cell.row)).end('up').row
+        if last_row <= 1:
+            if q: q.put(("status", f"Nenhum dado para filtrar em {sheet.name} (apenas cabeçalho)."))
+            return []
+            
+        last_col_letter = copy_range_str.split(':')[-1]
+        filter_range = sheet.range(f'A1:{last_col_letter}{last_row}')
+        data_range = sheet.range(f'A2:{last_col_letter}{last_row}')
+
+        xlAnd = 1 
+        filter_range.api.AutoFilter(
+            Field:=filter_col_idx,
+            Criteria1:=">0",
+            Operator:=xlAnd,
+            Criteria2:="<>#N/A"
+        )
+
+        try:
+            xlCellTypeVisible = 12
+            visible_cells = data_range.api.SpecialCells(xlCellTypeVisible)
+            
+            for area in visible_cells.Areas:
+                values = sheet.range(area.Address).value
+                if not values:
+                    continue
+                if isinstance(values, list) and isinstance(values[0], list):
+                    data.extend(values)
+                else:
+                    data.append(values)
+                    
+        except Exception:
+            if q: q.put(("status", f"Nenhum dado visível em {sheet.name} após o filtro.")) 
+            data = []
+        
+        if data:
+            # 🔧 Normalizar as linhas antes de retornar
+            max_len = max(len(r) if isinstance(r, (list, tuple)) else 1 for r in data)
+            normalized = []
+            for row in data:
+                if isinstance(row, (list, tuple)):
+                    row = list(row)
+                else:
+                    row = [row]
+                row += [None] * (max_len - len(row))
+                normalized.append(row)
+            data = normalized
+
+            # 🧹 Remover linhas cujo primeiro valor está vazio
+            before = len(data)
+            data = [row for row in data if str(row[0]).strip() not in ("", "None", "nan")]
+            removed = before - len(data)
+            if removed:
+                q.put(("status", f"Removidas {removed} linhas com primeira coluna vazia de {sheet.name}."))
+
+            q.put(("status", f"[DEBUG] Dados normalizados ({len(data)} linhas, {max_len} colunas) antes do retorno."))
+            q.put(("status", f"Lidas {len(data)} linhas filtradas de {sheet.name}."))
+
+    except Exception as e:
+        if q: q.put(("status", f"ERRO ao filtrar ou copiar dados de {sheet.name}: {e}"))
+    finally:
+        try:
+            sheet.api.AutoFilterMode = False
+        except Exception as e_clear:
+            if q: q.put(("status", f"Aviso: Não foi possível limpar o filtro em {sheet.name}. {e_clear}"))
+            
+    return data
+
+
+
+
+def _read_mopar_data(q):
+    """Lê os dados dos arquivos MOPAR Supplier e PFEP."""
+    if q: q.put(("status", "Lendo arquivos MOPAR..."))
+    data_mopar_sup = []
+    data_mopar_pfep = []
+    app = None
+    wb_sup = None
+    wb_pfep = None
+
+    try:
+        cargolift_prog_MOPAR_path = get_path_from_config("mopar_supplier_terms", "base_planilhas_recebidos", q)
+        cargolift_sp_Part_Number_MOPAR_path = get_path_from_config("mopar_pn_terms", "base_planilhas_recebidos", q)
+
+
+        app = xw.App(visible=True, add_book=False)
 
         # --- Ler MOPAR Supplier ---
-        if cargolift_prog_MOPAR_path:
-            if q: q.put(("status", f"Abrindo MOPAR Supplier: {cargolift_prog_MOPAR_path}"))
-            app_mopar_supplier = xw.App(visible=True, add_book=False)
-            app_mopar_supplier.display_alerts = False
-            app_mopar_supplier.api.AskToUpdateLinks = False
-            wb_mopar_supplier = app_mopar_supplier.books.open(cargolift_prog_MOPAR_path, update_links=False, read_only=True)
-            
-            sheet_mopar_sup = None
-            try:
-                sheet_mopar_sup = wb_mopar_supplier.sheets['Suppliers'] # Tenta o nome exato
-            except:
-                sheet_mopar_sup = wb_mopar_supplier.sheets[0] # Senão, pega a primeira
-            
-            # *** MODIFICADO: Ler A2 até AG (e última linha de A) ***
-            last_row_sup = sheet_mopar_sup.range('A' + str(sheet_mopar_sup.cells.last_cell.row)).end('up').row
-            if last_row_sup >= 2:
-                range_str_sup = f'A2:AG{last_row_sup}'
-                data_mopar_sup = sheet_mopar_sup.range(range_str_sup).value
-                # Garantir que len() funcione corretamente se for uma única linha
-                if last_row_sup == 2 and not isinstance(data_mopar_sup[0], list):
-                    data_mopar_sup = [data_mopar_sup] # Transforma 1D em 2D
-                
-                if q: q.put(("status", f"Lidas {len(data_mopar_sup)} linhas (A2:AG{last_row_sup}) do MOPAR Supplier."))
-            else:
-                 if q: q.put(("status", "Nenhum dado (>= A2) encontrado no MOPAR Supplier."))
-        else:
-            if q: q.put(("status", "AVISO: Arquivo MOPAR Supplier não encontrado."))
+        wb_sup = _safe_open_workbook(q, app, cargolift_prog_MOPAR_path)
+        if wb_sup:
+            sheet_sup = _get_sheet_by_name_or_index(q, wb_sup, ['Suppliers'])
+            if sheet_sup:
+                # Copia A2 até AG(última linha)
+                data_mopar_sup = _read_data_from_range(q, sheet_sup, 'A2', 'AG')
 
         # --- Ler MOPAR PFEP ---
-        if cargolift_sp_Part_Number_MOPAR_path:
-            if q: q.put(("status", f"Abrindo MOPAR PFEP: {cargolift_sp_Part_Number_MOPAR_path}"))
-            app_mopar_pfep = xw.App(visible=True, add_book=False)
-            app_mopar_pfep.display_alerts = False
-            app_mopar_pfep.api.AskToUpdateLinks = False
-            
-            wb_mopar_pfep = app_mopar_pfep.books.open(cargolift_sp_Part_Number_MOPAR_path, update_links=False, read_only=True)
-            
-            sheet_mopar_pfep = None
-            try:
-                sheet_mopar_pfep = wb_mopar_pfep.sheets['PFEP'] # Tenta o nome exato
-            except:
-                sheet_mopar_pfep = wb_mopar_pfep.sheets[0] # Senão, pega a primeira
-            
-            # *** MODIFICADO: Ler A2 até AU (e última linha de A) ***
-            last_row_pfep = sheet_mopar_pfep.range('A' + str(sheet_mopar_pfep.cells.last_cell.row)).end('up').row
-            if last_row_pfep >= 2:
-                range_str_pfep = f'A2:AU{last_row_pfep}'
-                data_mopar_pfep = sheet_mopar_pfep.range(range_str_pfep).value
-                # Garantir que len() funcione corretamente se for uma única linha
-                if last_row_pfep == 2 and not isinstance(data_mopar_pfep[0], list):
-                    data_mopar_pfep = [data_mopar_pfep] # Transforma 1D em 2D
-
-                if q: q.put(("status", f"Lidas {len(data_mopar_pfep)} linhas (A2:AU{last_row_pfep}) do MOPAR PFEP."))
-            else:
-                if q: q.put(("status", "Nenhum dado (>= A2) encontrado no MOPAR PFEP."))
-        else:
-            if q: q.put(("status", "AVISO: Arquivo MOPAR PFEP (Part Number) não encontrado."))
+        wb_pfep = _safe_open_workbook(q, app, cargolift_sp_Part_Number_MOPAR_path)
+        if wb_pfep:
+            sheet_pfep = _get_sheet_by_name_or_index(q, wb_pfep, ['PFEP'])
+            if sheet_pfep:
+                # Copia A2 até AU(última linha)
+                data_mopar_pfep = _read_data_from_range(q, sheet_pfep, 'A2', 'AU')
 
     except Exception as e:
         if q: q.put(("status", f"ERRO ao ler arquivos MOPAR: {e}"))
     finally:
-        # Garante que todos os arquivos MOPAR sejam fechados
-        if wb_mopar_supplier: wb_mopar_supplier.close()
-        if app_mopar_supplier: app_mopar_supplier.quit()
-        if wb_mopar_pfep: wb_mopar_pfep.close()
-        if app_mopar_pfep: app_mopar_pfep.quit()
+        if wb_sup: wb_sup.close()
+        if wb_pfep: wb_pfep.close()
+        if app: app.quit()
         if q: q.put(("status", "Arquivos MOPAR fechados."))
+        
+    return data_mopar_sup, data_mopar_pfep
 
+
+def _read_porto_real_data(q):
+    """Lê os dados dos arquivos Porto Real Supplier e PFEP."""
+    if q: q.put(("status", "Lendo arquivos Porto Real..."))
+    data_pr_sup = []
+    data_pr_pfep = []
+    app = None
+    wb = None
     
-    if q: q.put(("status", "Iniciando colagem de dados SP..."))
-    
-    # --- 1. Colar Supplier SP (MOPAR + CKD) ---
     try:
-        sheet_sup = sheet_wb_cargolift_sp_Supplier
+        Cargolift_prog_PR_path = get_path_from_config("porto_real_terms", "base_planilhas_recebidos", q) # Assumindo que está em 'recebidos'
+        app = xw.App(visible=False, add_book=False)
+        app.display_alerts = False
         
-        start_row_sup = sheet_sup.range('A' + str(sheet_sup.cells.last_cell.row)).end('up').row + 1
-        if start_row_sup == 2 and sheet_sup.range('A1').value is None: 
-            start_row_sup = 1
-        if sheet_sup.range('A1').value is not None and start_row_sup == 1: 
-            start_row_sup = 2
-        if start_row_sup == 2 and sheet_sup.range('A2').value is not None:
-            start_row_sup = sheet_sup.range('A' + str(sheet_sup.cells.last_cell.row)).end('up').row + 1
-        
-        current_row_sup = start_row_sup
-        total_pasted_sup = 0
+        app.api.AskToUpdateLinks = False  # 🔒 Prevents Excel popup
 
-        # Colar MOPAR Supplier PRIMEIRO
-        if data_mopar_sup:
-            # *** FIX: Correção na contagem de linhas (len) ***
-            rows_to_paste_sup = len(data_mopar_sup)
-            sheet_sup.range(f'A{current_row_sup}').value = data_mopar_sup
-            current_row_sup += rows_to_paste_sup
-            total_pasted_sup += rows_to_paste_sup
-            if q: q.put(("status", f"Coladas {rows_to_paste_sup} linhas MOPAR Supplier."))
         
-        # Colar CKD Supplier DEPOIS
-        if data_ckd_supplier_sp:
-            # *** FIX: Correção na contagem de linhas (len) ***
-            rows_to_paste_ckd_sup = 0
-            if data_ckd_supplier_sp and isinstance(data_ckd_supplier_sp[0], list):
-                rows_to_paste_ckd_sup = len(data_ckd_supplier_sp) # 2D
-            elif data_ckd_supplier_sp:
-                rows_to_paste_ckd_sup = 1 # 1D
+        wb = _safe_open_workbook(q, app, Cargolift_prog_PR_path)
+        if wb:
+            # --- Ler Porto Real Supplier ---
+            # Tenta 'Suppliers', depois 'supplier'
+            sheet_sup = _get_sheet_by_name_or_index(q, wb, ['supplier', 'Suppliers'])
+            if sheet_sup:
+                # Copia B2 até AM(última linha)
+                data_pr_sup = _read_data_from_range(q, sheet_sup, 'B2', 'AM')
             
-            if rows_to_paste_ckd_sup > 0:
-                sheet_sup.range(f'A{current_row_sup}').value = data_ckd_supplier_sp
-                current_row_sup += rows_to_paste_ckd_sup
-                total_pasted_sup += rows_to_paste_ckd_sup
-                if q: q.put(("status", f"Coladas {rows_to_paste_ckd_sup} linhas CKD Supplier."))
+            # --- Ler Porto Real PFEP ---
+            sheet_pfep = _get_sheet_by_name_or_index(q, wb, ['PFEP'])
+            if sheet_pfep:
+                # Copia B2 até AV(última linha)
+                data_pr_pfep = _read_data_from_range(q, sheet_pfep, 'B2', 'AV')
+                
+    except Exception as e:
+        if q: q.put(("status", f"ERRO ao ler arquivo Porto Real: {e}"))
+    finally:
+        if wb: wb.close()
+        if app: app.quit()
+        if q: q.put(("status", "Arquivo Porto Real fechado."))
+        
+    return data_pr_sup, data_pr_pfep
 
-        # Aplicar formatação em TODO O BLOCO colado (se algo foi colado)
-        if total_pasted_sup > 0:
-            end_row_sup = current_row_sup - 1
-            source_format_range = sheet_sup.range((3, 1), (3, last_col_format_index)) 
-            dest_format_range = sheet_sup.range((start_row_sup, 1), (end_row_sup, last_col_format_index))
+
+def _read_fiape_data(q):
+    """Lê os dados filtrados dos arquivos FIAPE."""
+    if q: q.put(("status", "Lendo arquivos FIAPE..."))
+    data_fiape_sup = []
+    data_fiape_pfep = []
+    app = None
+    wb = None
+    
+    try:
+        Cargolift_prog_FIAPE_path = get_path_from_config("fiape_terms", "base_planilhas_recebidos", q) # Assumindo que está em 'recebidos'
+        app = xw.App(visible=True, add_book=False)
+        app.display_alerts = False
+        
+        app.api.AskToUpdateLinks = False  # 🔒 Prevents Excel popup
+
+        
+        wb = _safe_open_workbook(q, app, Cargolift_prog_FIAPE_path)
+        if wb:
+            # --- Ler FIAPE PFEP ---
+            sheet_pfep = _get_sheet_by_name_or_index(q, wb, ['PFEP'])
+            if sheet_pfep:
+                # Filtra F-L (>0 e não #N/A), copia A:BC
+                data_fiape_pfep = _read_filtered_data(q, sheet_pfep, 'F', 'L', 'A:BC')
             
-            source_format_range.copy()
-            dest_format_range.paste(paste='formats')
-            
-            sheet_sup.book.app.api.CutCopyMode = False
-            if q: q.put(("status", f"Formatação aplicada a {total_pasted_sup} linhas de Supplier SP."))
-        else:
-            if q: q.put(("status", "Nenhum dado (MOPAR ou CKD) para colar em Supplier SP."))
+            # --- Ler FIAPE Suppliers DB ---
+            sheet_sup = _get_sheet_by_name_or_index(q, wb, ['Suppliers DB'])
+            if sheet_sup:
+                # Filtra L-N (>0 e não #N/A), copia A:AP
+                data_fiape_sup = _read_filtered_data(q, sheet_sup, 'I', 'N', 'A:AG')
 
     except Exception as e:
-        if q: q.put(("status", f"ERRO ao colar dados CKD Supplier SP: {e}"))
-
-
-    # --- 2. Colar PFEP SP (MOPAR + CKD) ---
-    try:
-        sheet_pfep = sheet_wb_cargolift_sp_PFEP
+        if q: q.put(("status", f"ERRO ao ler arquivo FIAPE: {e}"))
+    finally:
+        if wb: wb.close()
+        if app: app.quit()
+        if q: q.put(("status", "Arquivo FIAPE fechado."))
         
-        start_row_pfep = sheet_pfep.range('A' + str(sheet_pfep.cells.last_cell.row)).end('up').row + 1
-        if start_row_pfep == 2 and sheet_pfep.range('A1').value is None: 
-            start_row_pfep = 1
-        if sheet_pfep.range('A1').value is not None and start_row_pfep == 1: 
-            start_row_pfep = 2
-        if start_row_pfep == 2 and sheet_pfep.range('A2').value is not None:
-            start_row_pfep = sheet_pfep.range('A' + str(sheet_pfep.cells.last_cell.row)).end('up').row + 1
-            
-        current_row_pfep = start_row_pfep
-        total_pasted_pfep = 0
+    return data_fiape_sup, data_fiape_pfep
 
-        # Colar MOPAR PFEP PRIMEIRO
-        if data_mopar_pfep:
-            # *** FIX: Correção na contagem de linhas (len) ***
-            rows_to_paste_pfep = len(data_mopar_pfep)
-            sheet_pfep.range(f'A{current_row_pfep}').value = data_mopar_pfep
-            current_row_pfep += rows_to_paste_pfep
-            total_pasted_pfep += rows_to_paste_pfep
-            if q: q.put(("status", f"Coladas {rows_to_paste_pfep} linhas MOPAR PFEP."))
 
-        # Colar CKD PFEP DEPOIS
-        if data_ckd_pfep_sp:
-            # *** FIX: Correção na contagem de linhas (len) ***
-            rows_to_paste_ckd_pfep = 0
-            if data_ckd_pfep_sp and isinstance(data_ckd_pfep_sp[0], list):
-                rows_to_paste_ckd_pfep = len(data_ckd_pfep_sp) # 2D
-            elif data_ckd_pfep_sp:
-                rows_to_paste_ckd_pfep = 1 # 1D
+def _paste_data_to_sheet(q, sheet, data_blocks, source_name, last_col_format_index=40):
+    """
+    Cola múltiplos blocos de dados em uma planilha de destino e aplica formatação.
+    """
+    if not sheet:
+        if q: q.put(("status", f"ERRO: Planilha de destino para {source_name} é inválida."))
+        return
+        
+    try:
+        if q: q.put(("status", f"Iniciando colagem em {source_name}..."))
+        
+        # Encontra a primeira linha vazia para colar
+        start_row = sheet.range('A' + str(sheet.cells.last_cell.row)).end('up').row + 1
+        if start_row == 2 and sheet.range('A1').value is None:
+            start_row = 1
+        if sheet.range('A1').value is not None and start_row == 1:
+            start_row = 2
+        if start_row == 2 and sheet.range('A2').value is not None:
+            start_row = sheet.range('A' + str(sheet.cells.last_cell.row)).end('up').row + 1
             
-            if rows_to_paste_ckd_pfep > 0:
-                sheet_pfep.range(f'A{current_row_pfep}').value = data_ckd_pfep_sp
-                current_row_pfep += rows_to_paste_ckd_pfep
-                total_pasted_pfep += rows_to_paste_ckd_pfep
-                if q: q.put(("status", f"Coladas {rows_to_paste_ckd_pfep} linhas CKD PFEP."))
+        current_row = start_row
+        total_pasted = 0
+        
+        # Itera e cola cada bloco de dados
+        for i, data in enumerate(data_blocks):
+            if not data:
+                if q: q.put(("status", f"Bloco {i+1} de {source_name} está vazio. Pulando."))
+                continue
+            
+            # Garante que os dados sejam 2D, se for uma única linha
+            if not isinstance(data[0], list):
+                data = [data]
+            
+            rows_to_paste = len(data)
+            if rows_to_paste > 0:
+                sheet.range(f'A{current_row}').value = data
+                current_row += rows_to_paste
+                total_pasted += rows_to_paste
+                if q: q.put(("status", f"Coladas {rows_to_paste} linhas do bloco {i+1} em {source_name}."))
 
         # Aplicar formatação em TODO O BLOCO colado (se algo foi colado)
-        if total_pasted_pfep > 0:
-            end_row_pfep = current_row_pfep - 1
-            source_format_range = sheet_pfep.range((3, 1), (3, last_col_format_index))
-            dest_format_range = sheet_pfep.range((start_row_pfep, 1), (end_row_pfep, last_col_format_index))
-            
-            source_format_range.copy()
-            dest_format_range.paste(paste='formats')
-
-            sheet_pfep.book.app.api.CutCopyMode = False
-            if q: q.put(("status", f"Formatação aplicada a {total_pasted_pfep} linhas de PFEP SP."))
+        if total_pasted > 0:
+            end_row = current_row - 1
+            # Tenta copiar o formato da linha 3 (como no original)
+            try:
+                source_format_range = sheet.range((3, 1), (3, last_col_format_index))
+                dest_format_range = sheet.range((start_row, 1), (end_row, last_col_format_index))
+                
+                source_format_range.copy()
+                dest_format_range.paste(paste='formats')
+                
+                sheet.book.app.api.CutCopyMode = False
+                if q: q.put(("status", f"Formatação aplicada a {total_pasted} linhas de {source_name}."))
+            except Exception as e_format:
+                if q: q.put(("status", f"AVISO: Não foi possível aplicar formatação em {source_name}. {e_format}"))
         else:
-            if q: q.put(("status", "Nenhum dado (MOPAR ou CKD) para colar em PFEP SP."))
+            if q: q.put(("status", f"Nenhum dado para colar em {source_name}."))
 
     except Exception as e:
-        if q: q.put(("status", f"ERRO ao colar dados CKD PFEP SP: {e}"))
-        
+        if q: q.put(("status", f"ERRO ao colar dados em {source_name}: {e}"))
+
+
+def copiar_e_colar_SP(q=None, data_ckd_pfep_sp=None, data_ckd_supplier_sp=None,
+                      wb_cargolift_sp_PFEP=None, wb_cargolift_sp_Supplier=None):
+    """
+    Orquestra a leitura de dados (MOPAR, FIAPE, Porto Real) e os cola,
+    juntamente com os dados CKD, nas planilhas de destino SP.
+    """
+    q.put(("status", "Iniciando processo de colagem SP..."))
+    # --- 1. Definir Destinos ---
+    try:
+        sheet_wb_cargolift_sp_Supplier = wb_cargolift_sp_Supplier.sheets[CONFIG['paths']['sheet_names']['cargolift_sp_supplier_sheet']]
+        sheet_wb_cargolift_sp_PFEP = wb_cargolift_sp_PFEP.sheets[CONFIG['paths']['sheet_names']['pfep_main_sheet']]
+    except Exception as e:
+        if q: q.put(("status", f"ERRO FATAL: Não foi possível encontrar as planilhas de destino. {e}"))
+        return
+
+    # --- 2. Ler todos os dados das fontes ---
+    # (Os arquivos são abertos e fechados dentro de cada função)
+    data_mopar_sup, data_mopar_pfep = _read_mopar_data(q)
+    data_fiape_sup, data_fiape_pfep = _read_fiape_data(q)
+    data_pr_sup, data_pr_pfep = _read_porto_real_data(q)
+    q.put(("status", "Leitura de todas as fontes concluída."))
+    # --- 3. Agrupar dados para colagem ---
+    # A ordem de colagem será: MOPAR, FIAPE, Porto Real, CKD
+    
+    supplier_data_blocks = [
+        data_mopar_sup,
+        data_fiape_sup,
+        data_pr_sup,
+        data_ckd_supplier_sp 
+    ]
+    
+    q.put(("status", "Dados Supplier agrupados para colagem."))
+    pfep_data_blocks = [
+        data_mopar_pfep,
+        data_fiape_pfep,
+        data_pr_pfep,
+        data_ckd_pfep_sp
+    ]
+
+    q.put(("status", "Dados PFEP agrupados para colagem."))
+
+    # --- 4. Colar blocos de dados ---
+    # Assume que a formatação vai até a coluna 50 (AU)
+    _paste_data_to_sheet(q, sheet_wb_cargolift_sp_Supplier, supplier_data_blocks, "Supplier SP", 50) 
+    _paste_data_to_sheet(q, sheet_wb_cargolift_sp_PFEP, pfep_data_blocks, "PFEP SP", 50) 
+    q.put(("status", "Colagem de todos os dados SP concluída."))
     if q: q.put(("status", "Processo de colagem SP concluído."))
-    
 
-    #  This part is to close the files not in use anymore and sinalize user to check all data before posting.
-    
-    # if wb_cargolift_sp_PFEP and wb_cargolift_sp_Supplier :
-    #     wb_cargolift_sp_PFEP.save()
-    #     wb_cargolift_sp_Supplier.save()
-    #     wb_cargolift_sp_PFEP.close()
-    #     wb_cargolift_sp_Supplier.close()
+
+
 
 def Processar_Embalagens() : 
     print("getting to the later paert of the code...........")
