@@ -86,20 +86,20 @@ def download_Demanda(page, url_order, q, username, password):
     # Processar_Demandas(q)
     try:
         # --- 1. Login and Initial Navigation ---
-        q.put(("status", "Navigating to login page..."))
+        q.put(("status", "Navegando para a página de login..."))
         page.goto(url_order, timeout=60000)
         q.put(("progress", 10))
 
-        q.put(("status", "Performing login..."))
+        q.put(("status", "Realizando login..."))
         page.get_by_role("textbox", name="User").fill(username)
         page.get_by_role("textbox", name="Password").fill(password)
         page.get_by_role("button", name="Log In").click()
-        q.put(("status", "Login successful!"))
+        q.put(("status", "Login realizado com sucesso!"))
         q.put(("progress", 20))
 
      
         # --- 2. Navigate to the correct report section ---
-        q.put(("status", "Navigating to the report section..."))
+        q.put(("status", "Navegando para a seção de relatórios..."))
         page.locator("#ID_button").click()
         page.get_by_text("ELOG - Importar A8 Automatica").nth(1).click()
         q.put(("progress", 30))
@@ -108,12 +108,13 @@ def download_Demanda(page, url_order, q, username, password):
         current_date = date.today()
         records_found = False
         
-        current_date = date.today()
+        current_date = date.today() 
+        # current_date = date.today() - timedelta(days=2)  # this is to be use for other dates simulations
         records_found = False
         
         while not records_found:
             date_str = current_date.strftime('%m/%d/%Y')
-            q.put(("status", f"Searching for records on: {date_str}"))
+            q.put(("status", f"Procurando registros em: {date_str}"))
             
             # Fill date fields and click search
             page.get_by_role("textbox", name="Data Inicial").fill(date_str)
@@ -125,18 +126,18 @@ def download_Demanda(page, url_order, q, username, password):
                 page.get_by_text("Total records:").click(timeout = 3000)
                 
                 # This code only runs if the expect() call above succeeds
-                q.put(("status", f"Records found for {date_str}!"))
+                q.put(("status", f"Registros encontrados em {date_str}!"))
                 records_found = True
                 q.put(("progress", 45))
 
             except TimeoutError:
                 # This code runs only if the locator was not visible after 60 seconds
-                q.put(("status", f"No records found for {date_str}. Trying previous day."))
+                q.put(("status", f"Nenhum registro encontrado em {date_str}. Tentando dia anterior."))
                 current_date -= timedelta(days=1)
                 time.sleep(2) # Small delay before trying again
 
         # --- 4. Row-wise TXT File Download ---
-        q.put(("status", "Starting individual file downloads..."))
+        q.put(("status", "Iniciando download dos arquivos individuais..."))
         
         # Define the base directory for downloads for the found date
         download_path_base = os.path.join(caminho_base, CONFIG['paths']['folders']['base_demanda'])
@@ -146,7 +147,7 @@ def download_Demanda(page, url_order, q, username, password):
         data_rows = page.get_by_role("cell", name="Download")
 
         row_count = data_rows.count()
-        q.put(("status", f"Found {row_count-1} files to download."))
+        q.put(("status", f"Encontrados {row_count-1} arquivos para download."))
 
         for i in range(1,row_count):
             
@@ -163,9 +164,9 @@ def download_Demanda(page, url_order, q, username, password):
             if os.path.exists(file_path):
                 os.remove(file_path)
             download.save_as(file_path)
-            q.put(("status", f"Downloaded: {download.suggested_filename}"))
+            q.put(("status", f"Baixado: {download.suggested_filename}"))
 
-        q.put(("status", "All individual file downloads are complete."))
+        q.put(("status", "Todos os downloads dos arquivos individuais estão completos."))
 
         q.put(("progress", 10))
 
@@ -175,7 +176,7 @@ def download_Demanda(page, url_order, q, username, password):
         
 
     except Exception as e:
-        q.put(("status", f"An error occurred: {e}"))
+        q.put(("status", f"❌ Ocorreu um erro: {e}"))
         # You might want to add more specific error handling here
 
 
@@ -870,12 +871,12 @@ def progrma_cargolift(arquivo_cargolift_sp_PFEP, arquivo_cargolift_sp_Supplier, 
     if data_supplier:
         print("📋 Colando dados Supplier DB...")
         ws_dest_supplier.range('A3').value = data_supplier
+   
     
     # Save and close
     wb_cargolift_sp_PFEP.save()
     wb_cargolift_sp_Supplier.save()
     Corregir_peso_e_valor(wb=wb_cargolift_sp_Supplier,demandas_path =wb_demandas ,q = q,pfep_source = pfep)
-
     wb_cargolift_sp_PFEP.close()
     wb_cargolift_sp_Supplier.close()
     app_cargolift.quit()
@@ -1165,34 +1166,16 @@ def Copiar_planejamentos_para_cargolift_Arquivos(wb_cargolift = None,q = None) :
     q.put(("progress",92))
 
     # caminho_pasta_matriz = os.path.join(caminho_base, '1 - MATRIZ')
-    caminho_pasta_programacoes = os.path.join(caminho_base, 'Planilhas_Recebidos')
-    
-    # --- Locate Programação FIASA file ---
+    Programacao_CKD = get_path_from_config('ckd_terms','base_planilhas_recebidos',q)
+    cargolift_prog_FPT = get_path_from_config('fpt_bt_terms','base_planilhas_recebidos',q)
     
     nome_prog_fiasa = get_path_from_config('fiasa_search_terms', 'base_matriz', q)
     cargolift_sp_PFEP = get_path_from_config('cargolift_pfep_terms', 'base_matriz', q)
     Programacao_FPT_Sul = get_path_from_config('fpt_sul_terms', 'base_matriz', q)
-    
-    cargolift_sp_Supplier = None
-    if wb_cargolift is None :
-        cargolift_sp_Supplier = get_path_from_config('cargolift_supplier_terms', 'base_matriz', q)
+
+    cargolift_sp_Supplier = get_path_from_config('cargolift_supplier_terms', 'base_matriz', q)
     
     
-
-
-    # *** CORRECTION: Changed 'nome' to 'prog' in this loop to correctly find files ***
-    for prog in os.listdir(caminho_pasta_programacoes):
-        
-        if ('FPT BT' in prog or 'FPT BT' in prog) and not prog.startswith("~$") and prog.endswith(('.xlsm', '.xls', '.xlsx')):
-            cargolift_prog_FPT = os.path.join(caminho_pasta_programacoes, prog)
-
-       
-        if ('PROGRAMAÇÃO CKD' in prog or 'PROGRAMAÇÃO CKD' in prog) and not prog.startswith("~$") and prog.endswith(('.xlsm', '.xls', '.xlsx')):
-            Programacao_CKD = os.path.join(caminho_pasta_programacoes, prog)
-
-
-
-    # Opening main/Master file where all other filkes will be paste
     
     # Check if files were found before opening
     if not cargolift_sp_PFEP:
@@ -1440,7 +1423,7 @@ def _ler_dados_fiasa(q, programacao_fiasa_path):
 
     try:
         q.put(("status", f"Abrindo arquivo FIASA para ler dados: {programacao_fiasa_path}"))
-        app_programacao_fiasa = xw.App(visible=False, add_book=False)
+        app_programacao_fiasa = xw.App(visible=True, add_book=False)
         app_programacao_fiasa.display_alerts = False
         app_programacao_fiasa.api.AskToUpdateLinks = False
         wb_programacao_fiasa = app_programacao_fiasa.books.open(programacao_fiasa_path, update_links=False, read_only=True)
@@ -1520,6 +1503,7 @@ def _ler_dados_ckd(q, Programacao_CKD_path):
     app_programacao_ckd = None
     wb_programacao_ckd = None
     filter_sul = 'CARGOLIFT SUL'
+    filter_cargo = 'CARGOLIFT'
 
     if not Programacao_CKD_path:
         q.put(("status", "AVISO: Caminho para 'Programacao_CKD' não fornecido. Pulando esta etapa."))
@@ -1579,7 +1563,7 @@ def _ler_dados_ckd(q, Programacao_CKD_path):
                 # --- 2. LER DADOS SP (NÃO-SUL) ---
                 q.put(("status", "Lendo dados CKD PFEP (SP)..."))
                 # Reaplicar filtro para "diferente de SUL"
-                filter_range_ckd_pfep.api.AutoFilter(Field:=23, Criteria1:="<>" + filter_sul)
+                filter_range_ckd_pfep.api.AutoFilter(Field:=23, Criteria1:= filter_cargo)
                 try:
                     visible_cells_sp = data_range_ckd_pfep.api.SpecialCells(xlCellTypeVisible)
                     raw_data_pfep_sp = []
@@ -1661,7 +1645,7 @@ def _ler_dados_ckd(q, Programacao_CKD_path):
                 # --- 2. LER DADOS SP (NÃO-SUL) ---
                 q.put(("status", "Lendo dados CKD Suppliers (SP)..."))
                 # Reaplicar filtro para "diferente de SUL"
-                filter_range_ckd_sup.api.AutoFilter(Field:=12, Criteria1:="<>" + filter_sul)
+                filter_range_ckd_sup.api.AutoFilter(Field:=12, Criteria1:= filter_cargo)
                 try:
                     visible_cells_sup_sp = data_range_ckd_sup.api.SpecialCells(xlCellTypeVisible)
                     raw_data_sup_sp = []
@@ -1852,14 +1836,6 @@ def Copiar_e_Colar_Programacao_Sul(Programacao_FPT_Sul_path =  None, q = None , 
 
 
 
-
-
-
-
-
-
-
-
 # -----------------------------------------------------------------------------
 # FUNÇÕES AUXILIARES DE LEITURA (Refatoradas)
 # -----------------------------------------------------------------------------
@@ -1980,10 +1956,6 @@ def _find_filter_column(q, sheet, start_col_char, end_col_char):
 
 
 
-
-
-
-
 def _read_filtered_data(q, sheet, filter_col_start, filter_col_end, copy_range_str):
     """
     [VERSÃO FINAL v13]
@@ -2069,15 +2041,6 @@ def _read_filtered_data(q, sheet, filter_col_start, filter_col_end, copy_range_s
             if q: q.put(("status", f"Aviso: Não foi possível limpar o filtro em {sheet.name}. {e_clear}"))
             
     return data
-
-
-
-
-# -----------------------------------------------------------------------------
-# (Mantenha a FUNÇÃO PRINCIPAL 'copiar_e_colar_SP' como está)
-# -----------------------------------------------------------------------------
-
-
 
 
 

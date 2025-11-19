@@ -94,7 +94,6 @@ def load_modelos():
 
 
 
-
 def run_automation(playwright: Playwright, q: queue.Queue):
     # Copiar_planejamentos_para_cargolift_Arquivos(q=q)
 
@@ -136,14 +135,14 @@ def run_automation(playwright: Playwright, q: queue.Queue):
 
 
     except FileNotFoundError:
-        q.put(("status", "Erro: 'Credencial.json' não encontrado."))
+        q.put(("status", "❌ Erro: Arquivo 'Credencial.json' não encontrado."))
     except KeyError:
-        q.put(("status", "Erro: JSON de credenciais inválido."))
+        q.put(("status", "❌ Erro: JSON de credenciais inválido."))
     except TimeoutError:
-        q.put(("status", "Erro de Timeout: Verifique os seletores ou a conexão."))
+        q.put(("status", "❌ Erro de Timeout: Verifique os seletores ou a conexão."))
         page.screenshot(path="login_error.png")
     except Exception as e:
-        q.put(("status", f"Ocorreu um erro inesperado: {e}"))
+        q.put(("status", f"❌ Erro inesperado: {e}"))
     finally:
         # 5. Clean Up and next step
         q.put(("status", "Fechando navegador..."))
@@ -160,29 +159,102 @@ def main_process(q: queue.Queue):
 class App:
     def __init__(self, root):
         self.root = root
-        self.root.title("Ferramenta de Automação e Processamento")
-        self.root.geometry("600x400")
-
+        self.root.title("Ferramenta de Automação e Processamento RPA")
+        self.root.geometry("700x550")
+        self.root.resizable(True, True)
+        
+        # DHL & STELLANTIS Colors
+        # DHL: Red (#FF0000), Yellow (#FFCC00)
+        # STELLANTIS: Blue (#003DA5), Orange (#FF6600)
+        dhl_red = "#FF0000"
+        dhl_yellow = "#FFCC00"
+        stellantis_blue = "#003DA5"
+        stellantis_orange = "#FF6600"
+        
+        # Set modern color scheme with DHL/STELLANTIS theme
+        style = ttk.Style()
+        style.theme_use('clam')
+        
+        # Configure button style with STELLANTIS blue
+        style.configure('TButton', background=stellantis_blue, foreground="white", relief="flat", padding=6)
+        style.map('TButton', background=[('active', stellantis_orange)])
+        
+        # Configure progressbar with gradient effect using STELLANTIS colors
+        style.configure('TProgressbar', background=stellantis_blue, troughcolor='#E8E8E8', bordercolor='#CCCCCC', lightcolor=stellantis_orange, darkcolor=stellantis_blue)
+        
+        # Configure labels with theme colors
+        style.configure('Title.TLabel', font=("Segoe UI", 16, "bold"), foreground=stellantis_blue)
+        
         self.queue = queue.Queue()
 
-        # --- Widgets ---
-        main_frame = ttk.Frame(root, padding="10")
+        # --- Main container ---
+        container = tk.Frame(root, bg="white")
+        container.pack(fill=tk.BOTH, expand=True)
+
+        # --- Header with DHL/STELLANTIS accent ---
+        header_frame = tk.Frame(container, bg=stellantis_blue, height=80)
+        header_frame.pack(fill=tk.X, padx=0, pady=0)
+        header_frame.pack_propagate(False)
+        
+        # Title section with colored background
+        title_label = tk.Label(header_frame, text="🤖 Automação de Planejamento MILK RUN", font=("Segoe UI", 16, "bold"), fg="white", bg=stellantis_blue)
+        title_label.pack(anchor="w", padx=15, pady=(10, 2))
+        
+        subtitle_label = tk.Label(header_frame, text="Processamento Inteligente de Processos Manuais", font=("Segoe UI", 9), fg=dhl_yellow, bg=stellantis_blue)
+        subtitle_label.pack(anchor="w", padx=15, pady=(0, 10))
+
+        # --- Main content frame ---
+        main_frame = ttk.Frame(container, padding="13")
         main_frame.pack(fill=tk.BOTH, expand=True)
 
-        self.status_label = ttk.Label(main_frame, text="Pronto para iniciar. Clique em 'Processar'.", font=("Helvetica", 12))
-        self.status_label.pack(pady=5, padx=5, fill=tk.X)
+        # Status section
+        self.status_label = ttk.Label(main_frame, text="Pronto para iniciar. Clique em 'Processar'.", font=("Segoe UI", 11), foreground=stellantis_blue)
+        self.status_label.pack(pady=(2, 5), padx=1, fill=tk.X)
 
+        # Progress bar with accent color
         self.progress_bar = ttk.Progressbar(main_frame, orient='horizontal', length=400, mode='determinate')
         self.progress_bar.pack(pady=10, padx=5, fill=tk.X)
 
-        self.process_button = ttk.Button(main_frame, text="Processar", command=self.start_processing_thread)
-        self.process_button.pack(pady=10)
+        # Button section with modern styling
+        button_frame = ttk.Frame(main_frame)
+        button_frame.pack(pady=4, fill=tk.X)
         
-        log_frame = ttk.LabelFrame(main_frame, text="Log de Atividades", padding="10")
-        log_frame.pack(pady=10, padx=5, fill=tk.BOTH, expand=True)
+        self.process_button = ttk.Button(button_frame, text="▶ Processar", command=self.start_processing_thread, style='TButton')
+        self.process_button.pack(side=tk.LEFT, padx=5)
         
-        self.log_text = scrolledtext.ScrolledText(log_frame, wrap=tk.WORD, width=70, height=15)
+        # Log section with accent
+        log_frame = ttk.LabelFrame(main_frame, text="📋 Log de Atividades", padding="13")
+        log_frame.pack(pady=0, padx=2, fill=tk.BOTH, expand=True)
+        
+        self.log_text = scrolledtext.ScrolledText(log_frame, wrap=tk.WORD, width=80, height=10, font=("Consolas", 11), bg="#F5F5F5", fg="#333333")
         self.log_text.pack(fill=tk.BOTH, expand=True)
+        
+        # Footer section with DHL/STELLANTIS branding
+        footer_frame = tk.Frame(container, bg=stellantis_blue, height=34)
+        footer_frame.pack(fill=tk.X, padx=0, pady=0, side=tk.BOTTOM)
+        footer_frame.pack_propagate(False)
+        
+        # Left side - DHL -> STELLANTIS
+        left_footer = tk.Frame(footer_frame, bg=stellantis_blue)
+        left_footer.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=15, pady=10)
+        
+        # DHL Logo/Text (DHL Yellow)
+        dhl_label = tk.Label(left_footer, text="🚚 DHL", font=("Segoe UI", 11, "bold"), fg=dhl_yellow, bg=stellantis_blue)
+        dhl_label.pack(side=tk.LEFT, padx=1)
+        
+        arrow_label = tk.Label(left_footer, text="→", font=("Segoe UI", 12, "bold"), fg=dhl_yellow, bg=stellantis_blue)
+        arrow_label.pack(side=tk.LEFT, padx=3)
+        
+        # STELLANTIS Logo/Text (STELLANTIS Orange accent)
+        stellantis_label = tk.Label(left_footer, text="STELLANTIS 🏢", font=("Segoe UI", 11, "bold"), fg=stellantis_orange, bg=stellantis_blue)
+        stellantis_label.pack(side=tk.LEFT, padx=3)
+        
+        # Right side - Developer credit
+        right_footer = tk.Frame(footer_frame, bg=stellantis_blue)
+        right_footer.pack(side=tk.RIGHT, padx=15, pady=10)
+        
+        footer_label = tk.Label(right_footer, text="Desenvolvido por: Vincent Pernarh", font=("Segoe UI", 9), fg="white", bg=stellantis_blue)
+        footer_label.pack(anchor="e")
 
     def start_processing_thread(self):
         self.process_button.config(state="disabled")
